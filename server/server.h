@@ -59,6 +59,7 @@ typedef struct {
     client_t clients[MAX_CLIENTS]; // Array of connected clients
     room_t rooms[MAX_ROOMS]; // Array of available rooms
     fd_set master_fds; // Master file descriptor set for select()
+    fd_set read_fds;  // Temporary file descriptor set for select()
     int max_fd; // Maximum file descriptor value in the master_fds set
     int running; // 1 if server is running, 0 if stopped
 } server_t;
@@ -68,7 +69,29 @@ typedef struct {
 int server_init(server_t *server);
 int server_run(server_t *server);
 void server_cleanup(server_t *server);
+
 int handle_new_connection(server_t *server);
 int handle_client_message(server_t *server, int client_index);
+
+// Authentication
+int handle_login_request(server_t *server, int client_index, struct login_request *req);
+uint32_t generate_session_token(void);
+
+// Room management  
+int handle_join_room_request(server_t *server, int client_index, struct join_room_request *req);
+int handle_leave_room_request(server_t *server, int client_index);
+int handle_create_room_request(server_t *server, int client_index, struct create_room_request *req);
+
+// Chat handling
+int handle_chat_message(server_t *server, int client_index, struct chat_message *msg);
+int handle_private_message(server_t *server, int client_index, struct private_message *msg);
+
+// Connection management
+int handle_keepalive(server_t *server, int client_index);
+int handle_disconnect_request(server_t *server, int client_index);
+
+// Information requests
+int handle_room_list_request(server_t *server, int client_index);
+int handle_user_list_request(server_t *server, int client_index);
 
 #endif // SERVER_H
