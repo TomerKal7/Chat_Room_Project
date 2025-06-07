@@ -51,10 +51,11 @@ typedef enum {
     JOIN_ROOM_FAILED    = 0x0012,
     JOIN_ROOM_IN_PROGRESS = 0x0013,  // Server confirms join request received
     LEAVE_ROOM_REQUEST  = 0x0020,
-    LEAVE_ROOM_SUCCESS  = 0x0021,
+    LEAVE_ROOM_RESPONSE  = 0x0021,
     CREATE_ROOM_REQUEST = 0x0030,
-    CREATE_ROOM_SUCCESS = 0x0031,
-    CREATE_ROOM_FAILED  = 0x0032,
+    CREATE_ROOM_RESPONSE = 0x0031, // Response to create room request
+    CREATE_ROOM_SUCCESS = 0x0032,
+    CREATE_ROOM_FAILED  = 0x0033,
 
     // Chat messages
     CHAT_MESSAGE        = 0x0040,
@@ -186,12 +187,39 @@ struct create_room_request {
     uint8_t max_users;        // 0 = unlimited
 } PACKED;
 
+// Server -> Client: Response to create room request
+struct create_room_response {
+    uint16_t msg_type;        // CREATE_ROOM_SUCCESS/CREATE_ROOM_FAILED
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint16_t room_id;         // Unique room identifier
+    char room_name[32];    // Name of the created room
+    char multicast_addr[16];  // IP address for multicast (e.g., "
+    uint16_t multicast_port;  // Port for multicast
+    uint8_t error_code;       // 0=success, 1=room_name_exists, 2=server_room_limit_reached
+    uint8_t error_msg_len;    // Length of the error message
+    char error_msg[128];      // Error message if any
+} PACKED;
+
+
 // Client -> Server: Request to leave current room
 struct leave_room_request {
     uint16_t msg_type;        // LEAVE_ROOM_REQUEST
     uint16_t msg_length;
     uint32_t timestamp;
     uint32_t session_token;
+} PACKED;
+
+// Server -> Client: Response to leave room request
+struct leave_room_response {
+    uint16_t msg_type;        // LEAVE_ROOM_SUCCESS/LEAVE_ROOM_FAILED
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint8_t error_code;       // 0=success, 1=not_in_room, 2=room_not_found
+    uint8_t error_msg_len;    // Length of the error message
+    char error_msg[128];      // Error message if any
 } PACKED;
 
 // Server -> Client: Confirmation of join request received (JOINING ROOM state)

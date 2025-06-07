@@ -37,17 +37,18 @@ typedef struct {
     char username[MAX_USERNAME_LEN]; // Username of the client
     int current_room_id;                  // Current room ID, -1 if not in a room
     int is_active;               // 1 if client is active, 0 if disconnected
+    time_t last_activity;        // Timestamp of the last activity for timeout checks
 } client_t;
 
 
 // Room structure
 typedef struct {
-    int id;                     // Unique room identifier
+    int room_id;                     // Unique room identifier
     char room_name[MAX_ROOM_NAME_LEN]; // Name of the room
     char password[MAX_PASSWORD_LEN]; // Password for the room, if any
     char multicast_addr[16]; // Multicast address for the room
     uint16_t multicast_port; // Port for multicast
-    int max_client;              // Maximum number of users allowed in the room
+    int max_clients;              // Maximum number of users allowed in the room
     int client_count;          // Current number of users in the room
     int is_active;           // 1 if room is active, 0 if closed
 } room_t;
@@ -93,5 +94,20 @@ int handle_disconnect_request(server_t *server, int client_index);
 // Information requests
 int handle_room_list_request(server_t *server, int client_index);
 int handle_user_list_request(server_t *server, int client_index);
+
+// Room/client lookup helpers
+int find_free_room_slot(server_t *server);
+int find_room_by_name(server_t *server, const char *room_name);
+int find_client_by_socket(server_t *server, int socket_fd);
+
+// Validation helpers
+int is_valid_room_name(const char *name, int len);
+int is_valid_password(const char *pw, int len);
+
+// Error response helpers
+void send_create_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg);
+void send_join_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg);
+void send_leave_room_response(server_t *server, int client_index, uint16_t error_code, const char *msg);
+
 
 #endif // SERVER_H

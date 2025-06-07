@@ -122,6 +122,20 @@ int server_run(server_t *server) {
             }
         }
 
+        // --- Timeout check for all clients ---
+        time_t current_time = time(NULL);
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (server->clients[i].is_active && 
+                difftime(current_time, server->clients[i].last_activity) > CONNECTION_TIMEOUT_SEC) {
+                // Client has timed out
+                printf("Client %d timed out\n", i);
+                close(server->clients[i].socket_fd); // Close the client socket
+                FD_CLR(server->clients[i].socket_fd, &server->master_fds); // Remove from master set
+                server->clients[i].is_active = 0; // Mark client as inactive
+                memset(&server->clients[i], 0, sizeof(client_t)); // Clear client structure
+            }
+        }
+
     }
     printf("Server is stopping...\n");
     return 0;   
@@ -150,6 +164,7 @@ int handle_new_connection(server_t *server) {
             server->clients[i].is_active = 1;// Mark client as active
             server->clients[i].state = CLIENT_AUTHENTICATING; // Set initial state
             server->clients[i].current_room_id = -1; // Not in a room
+            server->clients[i].last_activity = time(NULL); // Set last activity time
 
             FD_SET(client_socket, &server->master_fds); // Add client socket to the master set
             if (client_socket > server->max_fd) {
@@ -181,6 +196,8 @@ int handle_client_message(server_t *server, int client_index) {
         }
         return -1; // Client disconnected or error
     }
+
+    server->clients[client_index].last_activity = time(NULL); // Update last activity time
 
     struct message_header *header = (struct message_header *)buffer; // Cast buffer to message header
     printf("Received message from client %d: type=%d, length=%d\n", client_index, header->msg_type, header->msg_length);
@@ -224,228 +241,290 @@ int handle_client_message(server_t *server, int client_index) {
     }
 }
 
-int handle_login_request(server_t *server, int client_index, struct login_request *req) {
-    printf("Login request from client %d, username: %.*s\n", 
-           client_index, req->username_len, req->username);
-    
-    // For now, accept all logins (we'll add real validation later)
-    struct login_response response;
+// Helper: Send a create room error response
+void send_create_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg) {
+    struct create_room_response response;
     memset(&response, 0, sizeof(response));
-    
-    response.msg_type = LOGIN_SUCCESS;
-    response.msg_length = sizeof(response);
+    response.msg_type = CREATE_ROOM_FAILED;
     response.timestamp = time(NULL);
-    response.session_token = generate_session_token();
-    response.error_code = LOGIN_SUCCESS_CODE;
-    response.error_msg_len = 0;
-    
-    // Update client state
-    server->clients[client_index].state = CLIENT_CONNECTED;
-    server->clients[client_index].session_token = response.session_token;
-    strncpy(server->clients[client_index].username, req->username, req->username_len);
-    server->clients[client_index].username[req->username_len] = '\0';
-    
-    // Send response
+    response.session_token = server->clients[client_index].session_token;
+    response.error_code = error_code;
+    snprintf(response.error_msg, sizeof(response.error_msg), "%s", msg);
+    response.error_msg_len = strlen(response.error_msg);
+    response.msg_length = sizeof(response);
     send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
-    
-    printf("Client %d logged in as: %s\n", client_index, server->clients[client_index].username);
+}
+
+// Helper: Validate room name
+int is_valid_room_name(const char *name, int len) {
+    if (len <= 0 || len >= 32) return 0;
+    for (int i = 0; i < len; ++i) {
+        if (name[i] < 32 || name[i] > 126) return 0; // printable ASCII
+    }
+    return 1;
+}
+
+// Helper: Validate password
+int is_valid_password(const char *pw, int len) {
+    if (len < 0 || len >= 32) return 0;
+    return 1;
+}
+
+int handle_create_room_request(server_t *server, int client_index, struct create_room_request *req) {
+    printf("Client %d wants to create room: %.*s\n", client_index, req->room_name_len, req->room_name);
+
+    // Check if client is logged in
+    if (server->clients[client_index].state != CLIENT_CONNECTED) {
+        send_create_room_error(server, client_index, ROOM_NOT_FOUND, "Not logged in");
+        return 0;
+    }
+
+    // Validate room name
+    if (!is_valid_room_name(req->room_name, req->room_name_len)) {
+        send_create_room_error(server, client_index, ROOM_NAME_EXISTS, "Invalid room name");
+        return 0;
+    }
+
+    // Validate password
+    if (!is_valid_password(req->room_password, req->password_len)) {
+        send_create_room_error(server, client_index, ROOM_WRONG_PASSWORD, "Invalid password length");
+        return 0;
+    }
+
+    // Validate max users
+    if (req->max_users <= 0 || req->max_users > MAX_CLIENTS) {
+        send_create_room_error(server, client_index, ROOM_FULL, "Invalid max users");
+        return 0;
+    }
+
+    // Find free room slot
+    int room_slot = find_free_room_slot(server);
+    if (room_slot == -1) {
+        send_create_room_error(server, client_index, ROOM_FULL, "Server room limit reached");
+        return 0;
+    }
+
+    // Check if room name already exists
+    char clean_name[MAX_ROOM_NAME_LEN + 1];
+    memcpy(clean_name, req->room_name, req->room_name_len);
+    clean_name[req->room_name_len] = '\0';
+
+    if (find_room_by_name(server, clean_name) != -1) {
+        send_create_room_error(server, client_index, ROOM_NAME_EXISTS, "Room name already exists");
+        return 0;
+    }
+
+    // Create the room
+    room_t *room = &server->rooms[room_slot];
+    room->room_id = room_slot + 1;
+    strncpy(room->room_name, req->room_name, req->room_name_len);
+    room->room_name[req->room_name_len] = '\0';
+
+    if (req->password_len > 0) {
+        strncpy(room->password, req->room_password, req->password_len);
+        room->password[req->password_len] = '\0';
+    } else {
+        room->password[0] = '\0';
+    }
+
+    room->max_clients = req->max_users;
+    room->client_count = 0;
+    room->is_active = 1;
+
+    // Generate multicast address
+    sprintf(room->multicast_addr, "%s%d", MULTICAST_BASE_IP, room->room_id);
+    room->multicast_port = MULTICAST_PORT_START + room->room_id;
+
+    // Fill response with room info
+    struct create_room_response response;
+    memset(&response, 0, sizeof(response));
+    response.msg_type = CREATE_ROOM_SUCCESS;
+    response.timestamp = time(NULL);
+    response.session_token = server->clients[client_index].session_token;
+    response.room_id = room->room_id;
+    strncpy(response.room_name, room->room_name, sizeof(response.room_name));
+    strncpy(response.multicast_addr, room->multicast_addr, sizeof(response.multicast_addr));
+    response.multicast_port = room->multicast_port;
+    response.msg_length = sizeof(response);
+    response.error_code = ROOM_SUCCESS_CODE;
+    response.error_msg_len = 0;
+
+    send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
+
+    printf("Room '%s' created with ID %d\n", room->room_name, room->room_id);
     return 0;
 }
 
-uint32_t generate_session_token(void) {
-    static uint32_t counter = 1000;  // Starting value
-    
-    // Simple token generation: current time + counter
-    uint32_t token = (uint32_t)time(NULL) + counter;
-    counter++;
-    
-    // Make sure we never return 0 (invalid token)
-    if (token == 0) {
-        token = 1;
+int find_free_room_slot(server_t *server) {
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (!server->rooms[i].is_active) {
+            return i;
+        }
     }
-    
-    return token;
+    return -1;  // No free slots
 }
 
-int handle_keepalive(server_t *server, int client_index) {
-    printf("Keepalive from client %d\n", client_index);
-    
-    // Update last activity time (we'll add this field later if needed)
-    // For now, just send keepalive back
-    struct keepalive response;
-    response.msg_type = KEEPALIVE;
+
+int find_room_by_name(server_t *server, const char *room_name) {
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (server->rooms[i].is_active && 
+            strcmp(server->rooms[i].room_name, room_name) == 0) {
+            return i;
+        }
+    }
+    return -1;  // Room not found
+}
+
+int find_client_by_socket(server_t *server, int socket_fd) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].is_active && 
+            server->clients[i].socket_fd == socket_fd) {
+            return i;
+        }
+    }
+    return -1;  // Client not found
+}
+
+
+// Helper: Send a join room error response
+void send_join_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg) {
+    struct join_room_response response;
+    memset(&response, 0, sizeof(response));
+    response.msg_type = JOIN_ROOM_FAILED;
+    response.timestamp = time(NULL);
+    response.session_token = server->clients[client_index].session_token;
+    response.error_code = error_code;
+    snprintf(response.error_msg, sizeof(response.error_msg), "%s", msg);
+    response.error_msg_len = strlen(response.error_msg);
+    response.msg_length = sizeof(response);
+    send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
+}
+
+int handle_join_room_request(server_t *server, int client_index, struct join_room_request *req) {
+    printf("Client %d wants to join room: %.*s\n", client_index, req->room_name_len, req->room_name);
+
+    // Check if client is logged in
+    if (server->clients[client_index].state != CLIENT_CONNECTED) {
+        send_join_room_error(server, client_index, ROOM_NOT_FOUND, "Not logged in");
+        return 0;
+    }
+
+    // Validate room name
+    if (!is_valid_room_name(req->room_name, req->room_name_len)) {
+        send_join_room_error(server, client_index, ROOM_NOT_FOUND, "Invalid room name");
+        return 0;
+    }
+
+    // Find the room
+    char clean_name[MAX_ROOM_NAME_LEN + 1];
+    memcpy(clean_name, req->room_name, req->room_name_len);
+    clean_name[req->room_name_len] = '\0';
+    int room_index = find_room_by_name(server, clean_name);
+    if (room_index == -1) {
+        send_join_room_error(server, client_index, ROOM_NOT_FOUND, "Room not found");
+        return 0;
+    }
+
+    room_t *room = &server->rooms[room_index];
+
+    // Check password if room has one
+    if (strlen(room->password) > 0) {
+        if (req->password_len != strlen(room->password) ||
+            strncmp(room->password, req->room_password, req->password_len) != 0) {
+            send_join_room_error(server, client_index, ROOM_WRONG_PASSWORD, "Wrong room password");
+            return 0;
+        }
+    }
+
+    // Check room capacity
+    if (room->max_clients > 0 && room->client_count >= room->max_clients) {
+        send_join_room_error(server, client_index, ROOM_FULL, "Room is full");
+        return 0;
+    }
+
+    // Join the room
+    server->clients[client_index].state = CLIENT_IN_ROOM;
+    server->clients[client_index].current_room_id = room->room_id;
+    room->client_count++;
+
+    // Send success response
+    struct join_room_response response;
+    memset(&response, 0, sizeof(response));
+    response.msg_type = JOIN_ROOM_SUCCESS;
     response.msg_length = sizeof(response);
     response.timestamp = time(NULL);
     response.session_token = server->clients[client_index].session_token;
-    
+    response.room_id = room->room_id;
+    strncpy(response.multicast_addr, room->multicast_addr, sizeof(response.multicast_addr));
+    response.multicast_port = room->multicast_port;
+    response.error_code = ROOM_SUCCESS_CODE;
+    response.error_msg_len = 0;
+
     send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
-    
+
+    printf("Client %d joined room %s (ID: %d)\n", client_index, room->room_name, room->room_id);
+
     return 0;
 }
 
-int handle_disconnect_request(server_t *server, int client_index) {
-    printf("Client %d requested disconnect\n", client_index);
-    
-    // Send acknowledgment
-    struct disconnect_request ack;
-    ack.msg_type = DISCONNECT_ACK;
-    ack.msg_length = sizeof(ack);
-    ack.timestamp = time(NULL);
-    ack.session_token = server->clients[client_index].session_token;
-    
-    send(server->clients[client_index].socket_fd, &ack, sizeof(ack), 0);
-    
-    // Return -1 to signal disconnection
-    return -1;
+// Helper: Send a leave room response (success or error)
+void send_leave_room_response(server_t *server, int client_index, uint16_t error_code, const char *msg) {
+    struct leave_room_response response;
+    memset(&response, 0, sizeof(response));
+    response.msg_type = LEAVE_ROOM_RESPONSE;
+    response.timestamp = time(NULL);
+    response.session_token = server->clients[client_index].session_token;
+    response.error_code = error_code;
+    if (msg) {
+        snprintf(response.error_msg, sizeof(response.error_msg), "%s", msg);
+        response.error_msg_len = strlen(response.error_msg);
+    } else {
+        response.error_msg_len = 0;
+    }
+    response.msg_length = sizeof(response);
+    send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
 }
 
-// int handle_create_room_request(server_t *server, int client_index, struct create_room_request *req) {
-//     printf("Client %d wants to create room: %.*s\n", 
-//            client_index, req->room_name_len, req->room_name);
-    
-//     // Check if client is logged in
-//     if (server->clients[client_index].state != CLIENT_CONNECTED) {
-//         // Send error - not logged in
-//         return 0;
-//     }
-    
-//     // Find free room slot
-//     int room_slot = find_free_room_slot(server);
-//     if (room_slot == -1) {
-//         // Send room creation failed - server full
-//         printf("No free room slots\n");
-//         return 0;
-//     }
-    
-//     // Check if room name already exists
-//     if (find_room_by_name(server, req->room_name) != -1) {
-//         // Send room creation failed - name exists
-//         printf("Room name already exists\n");
-//         return 0;
-//     }
-    
-//     // Create the room
-//     room_t *room = &server->rooms[room_slot];
-//     room->room_id = room_slot + 1;  // Room IDs start from 1
-//     strncpy(room->room_name, req->room_name, req->room_name_len);
-//     room->room_name[req->room_name_len] = '\0';
-    
-//     if (req->password_len > 0) {
-//         strncpy(room->password, req->room_password, req->password_len);
-//         room->password[req->password_len] = '\0';
-//     } else {
-//         room->password[0] = '\0';  // No password
-//     }
-    
-//     room->max_clients = req->max_users;
-//     room->client_count = 0;
-//     room->is_active = 1;
-    
-//     // Generate multicast address
-//     sprintf(room->multicast_addr, "%s%d", MULTICAST_BASE_IP, room->room_id);
-//     room->multicast_port = MULTICAST_PORT_START + room->room_id;
-    
-//     // Send success response
-//     struct create_room_request response;  // Reusing struct for response
-//     response.msg_type = CREATE_ROOM_SUCCESS;
-//     response.msg_length = sizeof(response);
-//     response.timestamp = time(NULL);
-//     response.session_token = server->clients[client_index].session_token;
-    
-//     send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
-    
-//     printf("Room '%s' created with ID %d\n", room->room_name, room->room_id);
-//     return 0;
-// }
+int handle_leave_room_request(server_t *server, int client_index) {
+    client_t *client = &server->clients[client_index];
 
-// int find_free_room_slot(server_t *server) {
-//     for (int i = 0; i < MAX_ROOMS; i++) {
-//         if (!server->rooms[i].is_active) {
-//             return i;
-//         }
-//     }
-//     return -1;  // No free slots
-// }
+    // Check if client is in a room
+    if (client->state != CLIENT_IN_ROOM || client->current_room_id < 0) {
+        send_leave_room_response(server, client_index, ROOM_NOT_FOUND, "Not in a room");
+        return 0;
+    }
 
+    // Find the room by ID
+    int room_index = -1;
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (server->rooms[i].is_active && server->rooms[i].room_id == client->current_room_id) {
+            room_index = i;
+            break;
+        }
+    }
+    if (room_index == -1) {
+        send_leave_room_response(server, client_index, ROOM_NOT_FOUND, "Room not found");
+        client->state = CLIENT_CONNECTED;
+        client->current_room_id = -1;
+        return 0;
+    }
 
-// int find_room_by_name(server_t *server, const char *room_name) {
-//     for (int i = 0; i < MAX_ROOMS; i++) {
-//         if (server->rooms[i].is_active && 
-//             strcmp(server->rooms[i].room_name, room_name) == 0) {
-//             return i;
-//         }
-//     }
-//     return -1;  // Room not found
-// }
+    room_t *room = &server->rooms[room_index];
 
-// int find_client_by_socket(server_t *server, int socket_fd) {
-//     for (int i = 0; i < MAX_CLIENTS; i++) {
-//         if (server->clients[i].is_active && 
-//             server->clients[i].socket_fd == socket_fd) {
-//             return i;
-//         }
-//     }
-//     return -1;  // Client not found
-// }
+    // Remove client from room
+    if (room->client_count > 0) {
+        room->client_count--;
+    }
+    client->state = CLIENT_CONNECTED;
+    client->current_room_id = -1;
 
+    // Optionally, deactivate room if empty
+    if (room->client_count == 0) {
+        room->is_active = 0;
+    }
 
-// int handle_join_room_request(server_t *server, int client_index, struct join_room_request *req) {
-//     printf("Client %d wants to join room: %.*s\n", 
-//            client_index, req->room_name_len, req->room_name);
-    
-//     // Check if client is logged in
-//     if (server->clients[client_index].state != CLIENT_CONNECTED) {
-//         printf("Client not logged in\n");
-//         return 0;
-//     }
-    
-//     // Find the room
-//     int room_index = find_room_by_name(server, req->room_name);
-//     if (room_index == -1) {
-//         printf("Room not found\n");
-//         // Send JOIN_ROOM_FAILED
-//         return 0;
-//     }
-    
-//     room_t *room = &server->rooms[room_index];
-    
-//     // Check password if room has one
-//     if (strlen(room->password) > 0) {
-//         if (strncmp(room->password, req->room_password, req->password_len) != 0) {
-//             printf("Wrong room password\n");
-//             // Send JOIN_ROOM_FAILED - wrong password
-//             return 0;
-//         }
-//     }
-    
-//     // Check room capacity
-//     if (room->max_clients > 0 && room->client_count >= room->max_clients) {
-//         printf("Room is full\n");
-//         // Send JOIN_ROOM_FAILED - room full
-//         return 0;
-//     }
-    
-//     // Join the room
-//     server->clients[client_index].state = CLIENT_IN_ROOM;
-//     server->clients[client_index].current_room_id = room->room_id;
-//     room->client_count++;
-    
-//     // Send success response
-//     struct join_room_response response;
-//     response.msg_type = JOIN_ROOM_SUCCESS;
-//     response.msg_length = sizeof(response);
-//     response.timestamp = time(NULL);
-//     response.session_token = server->clients[client_index].session_token;
-//     response.room_id = room->room_id;
-//     strcpy(response.multicast_addr, room->multicast_addr);
-//     response.multicast_port = room->multicast_port;
-//     response.error_code = ROOM_SUCCESS_CODE;
-//     response.error_msg_len = 0;
-    
-//     send(server->clients[client_index].socket_fd, &response, sizeof(response), 0);
-    
-//     printf("Client %d joined room %s (ID: %d)\n", 
-//            client_index, room->room_name, room->room_id);
-    
-//     return 0;
-// }
+    send_leave_room_response(server, client_index, ROOM_SUCCESS_CODE, NULL);
+
+    printf("Client %d left room %s (ID: %d)\n", client_index, room->room_name, room->room_id);
+    return 0;
+}
