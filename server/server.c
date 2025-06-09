@@ -528,3 +528,155 @@ int handle_leave_room_request(server_t *server, int client_index) {
     printf("Client %d left room %s (ID: %d)\n", client_index, room->room_name, room->room_id);
     return 0;
 }
+
+// Add these missing functions to the end of your server.c file:
+
+int handle_login_request(server_t *server, int client_index, struct login_request *req) {
+    printf("Login request from client %d, username: %.*s\n", 
+           client_index, req->username_len, req->username);
+    
+    client_t *client = &server->clients[client_index];
+
+    // Check if client is in the correct state for login
+    if (client->state != CLIENT_AUTHENTICATING) {
+        printf("Client %d not in authenticating state\n", client_index);
+        return 0;
+    }
+
+    // Basic validation
+    if (req->username_len <= 0 || req->username_len >= MAX_USERNAME_LEN) {
+        printf("Invalid username length from client %d\n", client_index);
+        return 0;
+    }
+
+    // Update client state
+    strncpy(client->username, req->username, req->username_len);
+    client->username[req->username_len] = '\0';
+    client->state = CLIENT_CONNECTED;
+    client->session_token = generate_session_token();
+    client->current_room_id = -1;
+    client->last_activity = time(NULL);
+
+    // Send success response
+    struct login_response response;
+    memset(&response, 0, sizeof(response));
+    response.msg_type = LOGIN_SUCCESS;
+    response.msg_length = sizeof(response);
+    response.timestamp = time(NULL);
+    response.session_token = client->session_token;
+    response.error_code = LOGIN_SUCCESS_CODE;
+    response.error_msg_len = 0;
+
+    send(client->socket_fd, &response, sizeof(response), 0);
+    printf("Client %d logged in as: %s\n", client_index, client->username);
+    return 0;
+}
+
+// Function to generate a unique session token for each client
+uint32_t generate_session_token(void) {
+    static uint32_t counter = 1000;
+    uint32_t token = (uint32_t)time(NULL) + counter;
+    counter++;
+    if (token == 0) token = 1;
+    return token;
+}
+
+// Function to handle keepalive messages from clients
+int handle_keepalive(server_t *server, int client_index) {
+    printf("Keepalive from client %d\n", client_index);
+    server->clients[client_index].last_activity = time(NULL);
+    return 0;
+}
+
+// Function to handle disconnect requests from clients
+int handle_disconnect_request(server_t *server, int client_index) {
+    printf("Client %d requested disconnect\n", client_index);
+    
+    client_t *client = &server->clients[client_index];
+    
+    // If client is in a room, remove them from it first
+    if (client->state == CLIENT_IN_ROOM && client->current_room_id >= 0) {
+        printf("Client %d leaving room %d before disconnect\n", client_index, client->current_room_id);
+        
+        // Find the room and decrement client count
+        for (int i = 0; i < MAX_ROOMS; i++) {
+            if (server->rooms[i].is_active && server->rooms[i].room_id == client->current_room_id) {
+                if (server->rooms[i].client_count > 0) {
+                    server->rooms[i].client_count--;
+                }
+                
+                // Deactivate room if empty
+                if (server->rooms[i].client_count == 0) {
+                    server->rooms[i].is_active = 0;
+                    printf("Room %d deactivated (empty)\n", server->rooms[i].room_id);
+                }
+                break;
+            }
+        }
+    }
+    
+    printf("Client %d (%s) disconnected gracefully\n", 
+           client_index, 
+           (strlen(client->username) > 0) ? client->username : "unknown");
+    
+    // Return -1 to signal disconnection to the main loop
+    return -1;
+}
+
+// Function to handle chat messages from clients
+int handle_chat_message(server_t *server, int client_index, struct chat_message *msg) {
+    client_t *sender = &server->clients[client_index];
+    
+    printf("Chat message from client %d in room %d: %.*s\n", 
+           client_index, sender->current_room_id, msg->message_len, msg->message);
+
+    // Check if client is in a room
+    if (sender->state != CLIENT_IN_ROOM || sender->current_room_id < 0) {
+        printf("Client %d not in a room, ignoring chat message\n", client_index);
+        return 0;
+    }
+
+    // Create broadcast message with sender info
+    struct chat_message broadcast_msg;
+    memset(&broadcast_msg, 0, sizeof(broadcast_msg));
+    broadcast_msg.msg_type = CHAT_MESSAGE;
+    broadcast_msg.timestamp = time(NULL);
+    broadcast_msg.room_id = sender->current_room_id;
+    
+    // Add sender username
+    strncpy(broadcast_msg.sender_username, sender->username, sizeof(broadcast_msg.sender_username) - 1);
+    broadcast_msg.sender_username_len = strlen(sender->username);
+    
+    // Copy message
+    strncpy(broadcast_msg.message, msg->message, msg->message_len);
+    broadcast_msg.message_len = msg->message_len;
+    broadcast_msg.msg_length = sizeof(broadcast_msg);
+
+    // Broadcast to all clients in the same room
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].is_active && 
+            server->clients[i].state == CLIENT_IN_ROOM &&
+            server->clients[i].current_room_id == sender->current_room_id) {
+            
+            send(server->clients[i].socket_fd, &broadcast_msg, sizeof(broadcast_msg), 0);
+        }
+    }
+
+    printf("Chat message broadcasted to room %d\n", sender->current_room_id);
+    return 0;
+}
+
+int handle_private_message(server_t *server, int client_index, struct private_message *msg) {
+    printf("Private message from client %d (not implemented yet)\n", client_index);
+    return 0;
+}
+
+int handle_room_list_request(server_t *server, int client_index) {
+    printf("Room list request from client %d (not implemented yet)\n", client_index);
+    return 0;
+}
+
+int handle_user_list_request(server_t *server, int client_index) {
+    printf("User list request from client %d (not implemented yet)\n", client_index);
+    return 0;
+}

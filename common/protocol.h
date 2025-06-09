@@ -236,12 +236,15 @@ struct join_room_in_progress {
 // CHAT MESSAGES
 // ================================
 
-// Client -> Server: Regular chat message (server forwards via multicast)
+// Client -> Server: Regular chat message (server forwards to room)
 struct chat_message {
     uint16_t msg_type;        // CHAT_MESSAGE
     uint16_t msg_length;
     uint32_t timestamp;
     uint32_t session_token;
+    uint32_t room_id;         // Which room this message belongs to
+    uint8_t sender_username_len;
+    char sender_username[32];
     uint16_t message_len;
     char message[512];        // Max message length
 } PACKED;
@@ -287,6 +290,8 @@ struct disconnect_request {
     uint32_t timestamp;
     uint32_t session_token;
 } PACKED;
+
+
 
 // Server -> Client: Connection status notification
 struct connection_status {
