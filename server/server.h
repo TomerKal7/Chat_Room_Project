@@ -6,19 +6,26 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <process.h>
 #else
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <pthread.h>
 #endif
 #include "../common/protocol.h"
 #include <errno.h>
-#include <time.h>    
+#include <time.h>
+#include <string.h>
 
 
 // Server configuration
 #define MAX_CLIENTS 50
 #define MAX_ROOMS 20
+#define MULTICAST_BASE_ADDR "239.0.0.0"
+#define MULTICAST_BASE_PORT 40000
+#define THREAD_POOL_SIZE 10
 
 // Client states - state machine
 typedef enum {
@@ -57,12 +64,24 @@ typedef struct {
 // Server structure
 typedef struct {
     int welcome_socket; // Socket for accepting new connections
+    int multicast_socket; // UDP socket for multicast communication
     client_t clients[MAX_CLIENTS]; // Array of connected clients
     room_t rooms[MAX_ROOMS]; // Array of available rooms
     fd_set master_fds; // Master file descriptor set for select()
     fd_set read_fds;  // Temporary file descriptor set for select()
     int max_fd; // Maximum file descriptor value in the master_fds set
     int running; // 1 if server is running, 0 if stopped
+    
+    // Threading components
+#ifdef _WIN32
+    HANDLE client_mutex; // Mutex for client array synchronization
+    HANDLE room_mutex;   // Mutex for room array synchronization
+    HANDLE thread_pool[THREAD_POOL_SIZE]; // Thread pool for handling clients
+#else
+    pthread_mutex_t client_mutex; // Mutex for client array synchronization
+    pthread_mutex_t room_mutex;   // Mutex for room array synchronization
+    pthread_t thread_pool[THREAD_POOL_SIZE]; // Thread pool for handling clients
+#endif
 } server_t;
 
 
@@ -70,6 +89,25 @@ typedef struct {
 int server_init(server_t *server);
 int server_run(server_t *server);
 void server_cleanup(server_t *server);
+
+// Multicast functions
+int init_multicast_socket(server_t *server);
+int send_multicast_message(server_t *server, int room_id, const char *message, size_t message_len);
+
+// Threading functions
+int init_threading(server_t *server);
+void cleanup_threading(server_t *server);
+#ifdef _WIN32
+unsigned __stdcall client_thread_handler(void *arg);
+#else
+void* client_thread_handler(void *arg);
+#endif
+
+// Thread-safe client management
+typedef struct {
+    server_t *server;
+    int client_index;
+} client_thread_data_t;
 
 int handle_new_connection(server_t *server);
 int handle_client_message(server_t *server, int client_index);
@@ -108,6 +146,7 @@ int is_valid_password(const char *pw, int len);
 void send_create_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg);
 void send_join_room_error(server_t *server, int client_index, uint16_t error_code, const char *msg);
 void send_leave_room_response(server_t *server, int client_index, uint16_t error_code, const char *msg);
+void send_error_response(int socket_fd, const char *error_msg);
 
 
 #endif // SERVER_H

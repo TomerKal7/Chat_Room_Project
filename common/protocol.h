@@ -33,6 +33,18 @@
 #define RESPONSE_TIMEOUT_SEC    10
 #define SESSION_TIMEOUT_SEC     3600
 
+// ================================
+// HELPER MACROS AND CONSTANTS
+// ================================
+
+#define MAX_USERNAME_LEN    32
+#define MAX_PASSWORD_LEN    64
+#define MAX_ROOM_NAME_LEN   64
+#define MAX_MESSAGE_LEN     512
+#define MAX_ERROR_MSG_LEN   256
+
+// Session token validation
+#define INVALID_SESSION_TOKEN 0
 
 // ================================
 // MESSAGE TYPES DEFINITIONS
@@ -195,7 +207,7 @@ struct create_room_response {
     uint32_t session_token;
     uint16_t room_id;         // Unique room identifier
     char room_name[32];    // Name of the created room
-    char multicast_addr[16];  // IP address for multicast (e.g., "
+    char multicast_addr[16];  // IP address for multicast (e.g., "239.1.1.5")
     uint16_t multicast_port;  // Port for multicast
     uint8_t error_code;       // 0=success, 1=room_name_exists, 2=server_room_limit_reached
     uint8_t error_msg_len;    // Length of the error message
@@ -244,7 +256,7 @@ struct chat_message {
     uint32_t session_token;
     uint32_t room_id;         // Which room this message belongs to
     uint8_t sender_username_len;
-    char sender_username[32];
+    char sender_username[MAX_USERNAME_LEN];
     uint16_t message_len;
     char message[512];        // Max message length
 } PACKED;
@@ -346,18 +358,5 @@ struct error_message {
     uint8_t error_msg_len;
     char error_msg[256];
 } PACKED;
-
-// ================================
-// HELPER MACROS
-// ================================
-
-#define MAX_USERNAME_LEN    32
-#define MAX_PASSWORD_LEN    64
-#define MAX_ROOM_NAME_LEN   64
-#define MAX_MESSAGE_LEN     512
-#define MAX_ERROR_MSG_LEN   256
-
-// Session token validation
-#define INVALID_SESSION_TOKEN 0
 
 #endif // CHAT_PROTOCOL_H
