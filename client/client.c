@@ -26,42 +26,8 @@
     #include <netdb.h>
 #endif
 
-#include "../common/protocol.h"
-
-// Define missing constants
-#define BUFFER_SIZE 1024
-
-typedef struct {
-    #ifdef _WIN32
-    SOCKET tcp_socket;
-    SOCKET udp_socket;
-    #else
-    int tcp_socket;
-    int udp_socket;
-    #endif
-    uint32_t session_token;
-    uint16_t current_room_id;
-    char current_room[MAX_ROOM_NAME_LEN];
-    char username[MAX_USERNAME_LEN];
-    struct sockaddr_in multicast_addr;
-    int running;
-} client_t;
-
-// Function prototypes
-int init_client(client_t *client, const char *server_ip, int server_port);
-void cleanup_client(client_t *client);
-#ifdef _WIN32
-unsigned __stdcall udp_receiver_thread(void *arg);
-#else
-void *udp_receiver_thread(void *arg);
-#endif
-void handle_user_input(client_t *client);
-int send_login_request(client_t *client, const char *username, const char *password);
-int send_chat_message(client_t *client, const char *message);
-int send_create_room_request(client_t *client, const char *room_name, const char *password);
-int send_join_room_request(client_t *client, const char *room_name, const char *password);
-int send_private_message(client_t *client, const char *target_username, const char *message);
-void print_menu();
+#include "client.h"
+#include <ctype.h>
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
@@ -70,7 +36,10 @@ int main(int argc, char *argv[]) {
     }    client_t client;
     memset(&client, 0, sizeof(client));
     client.running = 1;
+    client.connected = 0;
+    client.in_room = 0;
     client.current_room_id = 0;
+    client.last_keepalive = 0;
     #ifdef _WIN32
     client.tcp_socket = INVALID_SOCKET;
     client.udp_socket = INVALID_SOCKET;
@@ -108,10 +77,8 @@ int main(int argc, char *argv[]) {
         WSACleanup();
 #endif
         return 1;
-    }
-
-    // Handle user input in main thread
-    handle_user_input(&client);
+    }    // Handle user input in main thread
+    handle_enhanced_user_input(&client);
 
     // Cleanup
     client.running = 0;
@@ -146,12 +113,14 @@ int init_client(client_t *client, const char *server_ip, int server_port) {
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
         printf("Invalid server IP address\n");
         return -1;
-    }
-
-    if (connect(client->tcp_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    }    if (connect(client->tcp_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
         perror("Connection to server failed");
         return -1;
     }
+
+    // Store server address and set connected flag
+    client->server_addr = server_addr;
+    client->connected = 1;
 
     // Create UDP socket for multicast
     client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
@@ -189,12 +158,19 @@ void cleanup_client(client_t *client) {
     if (client->tcp_socket != -1) {
         close(client->tcp_socket);
         client->tcp_socket = -1;
-    }
-    if (client->udp_socket != -1) {
+    }    if (client->udp_socket != -1) {
         close(client->udp_socket);
         client->udp_socket = -1;
     }
     #endif
+    
+    // Reset connection state
+    client->connected = 0;
+    client->in_room = 0;
+    client->session_token = 0;
+    client->current_room_id = 0;
+    memset(client->current_room, 0, sizeof(client->current_room));
+    memset(client->username, 0, sizeof(client->username));
 }
 
 #ifdef _WIN32
@@ -292,101 +268,6 @@ void *udp_receiver_thread(void *arg) {
 #endif
 }
 
-void handle_user_input(client_t *client) {
-    char input[BUFFER_SIZE];
-    char command[64];
-
-    while (client->running) {
-        printf("> ");
-        if (!fgets(input, sizeof(input), stdin)) {
-            break;
-        }
-
-        // Remove newline
-        input[strcspn(input, "\n")] = 0;
-        
-        if (strlen(input) == 0) {
-            continue;
-        }
-
-        // Parse command
-        sscanf(input, "%s", command);        if (strcmp(command, "help") == 0) {
-            print_menu();
-        }
-        else if (strcmp(command, "login") == 0) {
-            char username[MAX_USERNAME_LEN], password[MAX_PASSWORD_LEN];
-            if (sscanf(input, "login %31s %63s", username, password) == 2) {
-                if (send_login_request(client, username, password) == 0) {
-                    strncpy(client->username, username, MAX_USERNAME_LEN - 1);
-                    printf("Login successful!\n");
-                } else {
-                    printf("Login failed\n");
-                }
-            } else {
-                printf("Usage: login <username> <password>\n");
-            }
-        }
-        else if (strcmp(command, "create_room") == 0) {
-            char room_name[MAX_ROOM_NAME_LEN], room_password[MAX_PASSWORD_LEN] = {0};
-            int args = sscanf(input, "create_room %63s %63s", room_name, room_password);
-            if (args >= 1) {
-                if (send_create_room_request(client, room_name, args == 2 ? room_password : "") == 0) {
-                    printf("Room '%s' created successfully!\n", room_name);
-                } else {
-                    printf("Failed to create room\n");
-                }
-            } else {
-                printf("Usage: create_room <room_name> [password]\n");
-            }
-        }        else if (strcmp(command, "join_room") == 0) {
-            char room_name[MAX_ROOM_NAME_LEN], room_password[MAX_PASSWORD_LEN] = {0};
-            int args = sscanf(input, "join_room %63s %63s", room_name, room_password);
-            if (args >= 1) {
-                if (send_join_room_request(client, room_name, args == 2 ? room_password : "") == 0) {
-                    strncpy(client->current_room, room_name, MAX_ROOM_NAME_LEN - 1);
-                    printf("Joined room '%s' successfully!\n", room_name);
-                } else {
-                    printf("Failed to join room\n");
-                }
-            } else {
-                printf("Usage: join_room <room_name> [password]\n");
-            }
-        }        else if (strcmp(command, "chat") == 0) {
-            char *chat_message = input + 5; // Skip "chat "
-            if (strlen(chat_message) > 0 && client->session_token != 0 && client->current_room_id != 0) {
-                send_chat_message(client, chat_message);
-            } else {
-                printf("Usage: chat <message>\nNote: You must be logged in and in a room\n");
-            }
-        }
-        else if (strcmp(command, "private") == 0) {
-            char target_user[MAX_USERNAME_LEN];
-            char *private_message = NULL;
-            if (sscanf(input, "private %31s", target_user) == 1) {
-                private_message = strchr(input + 8, ' '); // Find message after username
-                if (private_message && strlen(private_message + 1) > 0) {
-                    private_message++; // Skip space
-                    if (send_private_message(client, target_user, private_message) == 0) {
-                        printf("Private message sent to %s\n", target_user);
-                    } else {
-                        printf("Failed to send private message\n");
-                    }
-                } else {
-                    printf("Usage: private <username> <message>\n");
-                }
-            } else {
-                printf("Usage: private <username> <message>\n");
-            }
-        }
-        else if (strcmp(command, "quit") == 0 || strcmp(command, "exit") == 0) {
-            client->running = 0;
-            break;
-        }
-        else {
-            printf("Unknown command. Type 'help' for available commands.\n");
-        }
-    }
-}
 
 int send_login_request(client_t *client, const char *username, const char *password) {
     struct login_request req;
@@ -401,7 +282,6 @@ int send_login_request(client_t *client, const char *username, const char *passw
     req.password_len = strlen(password);
     strncpy(req.password, password, MAX_PASSWORD_LEN - 1);
     
-    // Send request with proper error handling
     int bytes_sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
     #ifdef _WIN32
     if (bytes_sent == SOCKET_ERROR || bytes_sent != sizeof(req)) {
@@ -628,4 +508,623 @@ void print_menu() {
     printf("  private <username> <message>      - Send a private message\n");
     printf("  help                              - Show this menu\n");
     printf("  quit/exit                         - Exit the application\n\n");
+}
+
+// ================================
+// INFORMATION REQUEST FUNCTIONS
+// ================================
+
+int send_room_list_request(client_t *client) {
+    struct room_list_request req;
+    
+    memset(&req, 0, sizeof(req));
+    req.msg_type = ROOM_LIST_REQUEST;
+    req.msg_length = sizeof(req);
+    req.timestamp = time(NULL);
+    req.session_token = client->session_token;
+    
+    ssize_t sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
+    if (sent != sizeof(req)) {
+        printf("Failed to send room list request\n");
+        return -1;
+    }
+    
+    printf("Room list request sent...\n");
+    return 0;
+}
+
+// Update the existing function to use the proper struct
+
+int send_user_list_request(client_t *client) {
+    if (!IS_IN_ROOM(client)) {
+        printf("Error: You must be in a room to list users\n");
+        return -1;
+    }
+    
+    struct user_list_request req;
+    memset(&req, 0, sizeof(req));
+    req.msg_type = USER_LIST_REQUEST;
+    req.msg_length = sizeof(req);
+    req.timestamp = time(NULL);
+    req.session_token = client->session_token;
+    req.room_id = client->current_room_id;  // Optional: server can use client's current room
+    
+    ssize_t sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
+    if (sent != sizeof(req)) {
+        printf("Failed to send user list request\n");
+        return -1;
+    }
+    
+    printf("User list request sent for room %d...\n", client->current_room_id);
+    return 0;
+}
+
+// Add this new function
+
+void handle_user_list_response(client_t *client, char *buffer, size_t buffer_size) {
+    if (buffer_size < sizeof(struct user_list_response)) {
+        printf("Invalid user list response size\n");
+        return;
+    }
+    
+    struct user_list_response *response = (struct user_list_response*)buffer;
+    
+    printf("\n=== Users in Room ===\n");
+    printf("Found %d user(s) in room %d:\n", response->user_count, client->current_room_id);
+    
+    // Parse variable-length user data
+    char *data_ptr = buffer + sizeof(struct user_list_response);
+    char *buffer_end = buffer + buffer_size;
+    
+    for (int i = 0; i < response->user_count && data_ptr < buffer_end; i++) {
+        // Read username length
+        if (data_ptr + sizeof(uint8_t) > buffer_end) break;
+        uint8_t username_len = *(uint8_t*)data_ptr;
+        data_ptr += sizeof(uint8_t);
+        
+        // Read username
+        if (data_ptr + username_len > buffer_end) break;
+        char username[MAX_USERNAME_LEN + 1] = {0};
+        memcpy(username, data_ptr, username_len);
+        data_ptr += username_len;
+        
+        printf("  %d. %s\n", i + 1, username);
+    }
+    printf("=====================\n\n");
+}
+
+int send_leave_room_request(client_t *client) {
+    if (client->current_room_id == 0) {
+        printf("You are not in any room\n");
+        return -1;
+    }
+    
+    struct leave_room_request req;
+    
+    memset(&req, 0, sizeof(req));
+    req.msg_type = LEAVE_ROOM_REQUEST;
+    req.msg_length = sizeof(req);
+    req.timestamp = time(NULL);
+    req.session_token = client->session_token;
+    
+    ssize_t sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
+    if (sent != sizeof(req)) {
+        printf("Failed to send leave room request\n");
+        return -1;
+    }
+    
+    printf("Leave room request sent...\n");
+    return 0;
+}
+
+// ================================
+// RESPONSE HANDLERS
+// ================================
+
+// Replace the broken handle_room_list_response function with this:
+
+void handle_room_list_response(client_t *client, char *buffer, size_t buffer_size) {
+    if (buffer_size < 9) { // Minimum: 2+2+4+1 = 9 bytes
+        printf("Invalid room list response size\n");
+        return;
+    }
+    
+    // Parse the dynamic response format that server sends
+    char *ptr = buffer;
+    char *buffer_end = buffer + buffer_size;
+    
+    // Read header
+    uint16_t msg_type = *(uint16_t*)ptr;
+    ptr += sizeof(uint16_t);
+    
+    uint16_t msg_length = *(uint16_t*)ptr;
+    ptr += sizeof(uint16_t);
+    
+    uint32_t timestamp = *(uint32_t*)ptr;
+    ptr += sizeof(uint32_t);
+    
+    uint8_t room_count = *(uint8_t*)ptr;
+    ptr += sizeof(uint8_t);
+    
+    printf("\n=== Available Rooms ===\n");
+    if (room_count == 0) {
+        printf("No rooms available\n");
+    } else {
+        printf("Found %d room(s):\n", room_count);
+        
+        // Parse each room's data
+        for (int i = 0; i < room_count && ptr < buffer_end; i++) {
+            // Read room_id
+            if (ptr + sizeof(uint16_t) > buffer_end) break;
+            uint16_t room_id = *(uint16_t*)ptr;
+            ptr += sizeof(uint16_t);
+            
+            // Read room_name_len
+            if (ptr + sizeof(uint8_t) > buffer_end) break;
+            uint8_t room_name_len = *(uint8_t*)ptr;
+            ptr += sizeof(uint8_t);
+            
+            // Read room_name
+            if (ptr + room_name_len > buffer_end) break;
+            char room_name[MAX_ROOM_NAME_LEN + 1] = {0};
+            memcpy(room_name, ptr, room_name_len);
+            ptr += room_name_len;
+            
+            // Read user_count
+            if (ptr + sizeof(uint8_t) > buffer_end) break;
+            uint8_t user_count = *(uint8_t*)ptr;
+            ptr += sizeof(uint8_t);
+            
+            // Read has_password
+            if (ptr + sizeof(uint8_t) > buffer_end) break;
+            uint8_t has_password = *(uint8_t*)ptr;
+            ptr += sizeof(uint8_t);
+            
+            // Display room info
+            printf("  %d. %s (Room ID: %d, %d users) %s\n", 
+                   i + 1,
+                   room_name,
+                   room_id,
+                   user_count,
+                   has_password ? "[Password Protected]" : "");
+        }
+    }
+    printf("=======================\n\n");
+}
+
+int handle_leave_room_response(client_t *client, void *response_data) {
+    struct leave_room_response *resp = (struct leave_room_response*)response_data;
+    
+    if (resp->error_code == ROOM_SUCCESS_CODE) {
+        printf("Successfully left room '%s'\n", client->current_room);
+        
+        // Leave multicast group
+        leave_multicast_group(client);
+        
+        // Reset client room state
+        client->current_room_id = 0;
+        memset(client->current_room, 0, sizeof(client->current_room));
+        client->in_room = 0;
+        
+        return 0;
+    } else {
+        if (resp->error_msg_len > 0 && resp->error_msg_len < sizeof(resp->error_msg)) {
+            printf("Failed to leave room: %.*s\n", resp->error_msg_len, resp->error_msg);
+        } else {
+            printf("Failed to leave room\n");
+        }
+        return -1;
+    }
+}
+
+// ================================
+// CONNECTION MANAGEMENT FUNCTIONS
+// ================================
+
+int send_keepalive(client_t *client) {
+    struct keepalive msg;
+    
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_type = KEEPALIVE;
+    msg.msg_length = sizeof(msg);
+    msg.timestamp = time(NULL);
+    msg.session_token = client->session_token;
+    
+    ssize_t sent = send(client->tcp_socket, (char*)&msg, sizeof(msg), 0);
+    if (sent != sizeof(msg)) {
+        printf("Failed to send keepalive\n");
+        return -1;
+    }
+    
+    client->last_keepalive = time(NULL);
+    return 0;
+}
+
+int send_disconnect_request(client_t *client) {
+    struct disconnect_request req;
+    
+    memset(&req, 0, sizeof(req));
+    req.msg_type = DISCONNECT_REQUEST;
+    req.msg_length = sizeof(req);
+    req.timestamp = time(NULL);
+    req.session_token = client->session_token;
+    
+    ssize_t sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
+    if (sent != sizeof(req)) {
+        printf("Failed to send disconnect request\n");
+        return -1;
+    }
+    
+    printf("Disconnect request sent...\n");
+    return 0;
+}
+
+// ================================
+// MULTICAST FUNCTIONS
+// ================================
+
+int leave_multicast_group(client_t *client) {
+    if (client->udp_socket == -1 || client->current_room_id == 0) {
+        return 0; // Not in multicast group
+    }
+    
+    struct ip_mreq mreq;
+    mreq.imr_multiaddr = client->multicast_addr.sin_addr;
+    mreq.imr_interface.s_addr = INADDR_ANY;
+    
+    if (setsockopt(client->udp_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP,
+                   (const char*)&mreq, sizeof(mreq)) != 0) {
+        perror("Failed to leave multicast group");
+        return -1;
+    }
+    
+    return 0;
+}
+
+// ================================
+// INPUT VALIDATION FUNCTIONS
+// ================================
+
+int validate_username(const char *username) {
+    if (!username || strlen(username) == 0) {
+        printf("Username cannot be empty\n");
+        return 0;
+    }
+    
+    if (strlen(username) >= MAX_USERNAME_LEN) {
+        printf("Username too long (max %d characters)\n", MAX_USERNAME_LEN - 1);
+        return 0;
+    }
+    
+    // Check for valid characters (alphanumeric and underscore)
+    for (const char *p = username; *p; p++) {
+        if (!isalnum(*p) && *p != '_') {
+            printf("Username can only contain letters, numbers, and underscores\n");
+            return 0;
+        }
+    }
+    
+    return 1;
+}
+
+int validate_password(const char *password) {
+    if (!password) {
+        return 1; // Password can be empty
+    }
+    
+    if (strlen(password) >= MAX_PASSWORD_LEN) {
+        printf("Password too long (max %d characters)\n", MAX_PASSWORD_LEN - 1);
+        return 0;
+    }
+    
+    return 1;
+}
+
+int validate_room_name(const char *room_name) {
+    if (!room_name || strlen(room_name) == 0) {
+        printf("Room name cannot be empty\n");
+        return 0;
+    }
+    
+    if (strlen(room_name) >= MAX_ROOM_NAME_LEN) {
+        printf("Room name too long (max %d characters)\n", MAX_ROOM_NAME_LEN - 1);
+        return 0;
+    }
+    
+    // Check for valid characters
+    for (const char *p = room_name; *p; p++) {
+        if (!isalnum(*p) && *p != '_' && *p != '-' && *p != ' ') {
+            printf("Room name can only contain letters, numbers, spaces, hyphens, and underscores\n");
+            return 0;
+        }
+    }
+    
+    return 1;
+}
+
+int validate_message(const char *message) {
+    if (!message || strlen(message) == 0) {
+        printf("Message cannot be empty\n");
+        return 0;
+    }
+    
+    if (strlen(message) >= MAX_MESSAGE_LEN) {
+        printf("Message too long (max %d characters)\n", MAX_MESSAGE_LEN - 1);
+        return 0;
+    }
+    
+    return 1;
+}
+
+// ================================
+// UTILITY FUNCTIONS
+// ================================
+
+char* trim_whitespace(char *str) {
+    if (!str) return NULL;
+    
+    // Trim leading whitespace
+    while (isspace(*str)) str++;
+    
+    // If all whitespace
+    if (*str == 0) return str;
+    
+    // Trim trailing whitespace
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace(*end)) end--;
+    
+    // Write new null terminator
+    *(end + 1) = 0;
+    
+    return str;
+}
+
+int parse_command(char *input, char **command, char **args) {
+    if (!input || !command || !args) return -1;
+    
+    // Trim input
+    input = trim_whitespace(input);
+    if (strlen(input) == 0) return -1;
+    
+    // Find first space
+    char *space = strchr(input, ' ');
+    if (space) {
+        *space = '\0';
+        *command = input;
+        *args = trim_whitespace(space + 1);
+    } else {
+        *command = input;
+        *args = NULL;
+    }
+    
+    return 0;
+}
+
+void print_timestamp() {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    printf("[%02d:%02d:%02d] ", tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
+}
+
+void print_error(const char *error_msg) {
+    print_timestamp();
+    printf("ERROR: %s\n", error_msg);
+}
+
+void print_info(const char *info_msg) {
+    print_timestamp();
+    printf("INFO: %s\n", info_msg);
+}
+
+void print_chat_message(const char *sender, const char *message, time_t timestamp) {
+    struct tm *tm_info = localtime(&timestamp);
+    printf("[%02d:%02d:%02d] %s: %s\n", 
+           tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec,
+           sender, message);
+}
+
+void print_help() {
+    printf("\n=== Chat Client Help ===\n");
+    printf("Available commands:\n");
+    printf("  login <username> <password>       - Login to your account\n");
+    printf("  create_room <name> [password]     - Create a new chat room\n");
+    printf("  join_room <name> [password]       - Join an existing room\n");
+    printf("  leave_room                        - Leave current room\n");
+    printf("  chat <message>                    - Send a message to current room\n");
+    printf("  private <username> <message>      - Send a private message\n");
+    printf("  room_list                         - List all available rooms\n");
+    printf("  user_list                         - List users in current room\n");
+    printf("  help                              - Show this help\n");
+    printf("  quit/exit                         - Exit the application\n");
+    printf("========================\n\n");
+}
+
+// ================================
+// ENHANCED USER INPUT HANDLING
+// ================================
+
+void handle_enhanced_user_input(client_t *client) {
+    char input[MAX_INPUT_SIZE];
+    char *command, *args;
+    
+    while (client->running) {
+        printf("> ");
+        fflush(stdout);
+        
+        if (!fgets(input, sizeof(input), stdin)) {
+            break;
+        }
+        
+        // Remove newline
+        input[strcspn(input, "\n")] = 0;
+        
+        if (parse_command(input, &command, &args) != 0) {
+            continue;
+        }
+        
+        // Handle commands
+        if (strcmp(command, "login") == 0) {
+            if (client->session_token != 0) {
+                printf("Already logged in as %s\n", client->username);
+                continue;
+            }
+            
+            if (!args) {
+                printf("Usage: login <username> <password>\n");
+                continue;
+            }
+            
+            char *username = strtok(args, " ");
+            char *password = strtok(NULL, " ");
+            
+            if (!username || !password) {
+                printf("Usage: login <username> <password>\n");
+                continue;
+            }
+            
+            if (!validate_username(username) || !validate_password(password)) {
+                continue;
+            }
+            
+            send_login_request(client, username, password);
+            
+        } else if (strcmp(command, "create_room") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            if (!args) {
+                printf("Usage: create_room <name> [password]\n");
+                continue;
+            }
+            
+            char *room_name = strtok(args, " ");
+            char *password = strtok(NULL, " ");
+            
+            if (!room_name) {
+                printf("Usage: create_room <name> [password]\n");
+                continue;
+            }
+            
+            if (!validate_room_name(room_name) || 
+                (password && !validate_password(password))) {
+                continue;
+            }
+            
+            send_create_room_request(client, room_name, password ? password : "");
+            
+        } else if (strcmp(command, "join_room") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            if (!args) {
+                printf("Usage: join_room <name> [password]\n");
+                continue;
+            }
+            
+            char *room_name = strtok(args, " ");
+            char *password = strtok(NULL, " ");
+            
+            if (!room_name) {
+                printf("Usage: join_room <name> [password]\n");
+                continue;
+            }
+            
+            if (!validate_room_name(room_name) || 
+                (password && !validate_password(password))) {
+                continue;
+            }
+            
+            send_join_room_request(client, room_name, password ? password : "");
+            
+        } else if (strcmp(command, "leave_room") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            send_leave_room_request(client);
+            
+        } else if (strcmp(command, "chat") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            if (client->current_room_id == 0) {
+                printf("You must join a room first\n");
+                continue;
+            }
+            
+            if (!args || !validate_message(args)) {
+                continue;
+            }
+            
+            send_chat_message(client, args);
+            
+        } else if (strcmp(command, "private") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            if (!args) {
+                printf("Usage: private <username> <message>\n");
+                continue;
+            }
+            
+            char *username = strtok(args, " ");
+            char *message = strtok(NULL, "");
+            
+            if (!username || !message) {
+                printf("Usage: private <username> <message>\n");
+                continue;
+            }
+            
+            if (!validate_username(username) || !validate_message(message)) {
+                continue;
+            }
+            
+            send_private_message(client, username, message);
+            
+        } else if (strcmp(command, "room_list") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            send_room_list_request(client);
+            
+        } else if (strcmp(command, "user_list") == 0) {
+            if (client->session_token == 0) {
+                printf("You must login first\n");
+                continue;
+            }
+            
+            if (client->current_room_id == 0) {
+                printf("You must join a room first\n");
+                continue;
+            }
+            
+            send_user_list_request(client);
+            
+        } else if (strcmp(command, "help") == 0) {
+            print_help();
+            
+        } else if (strcmp(command, "quit") == 0 || strcmp(command, "exit") == 0) {
+            printf("Disconnecting...\n");
+            if (client->session_token != 0) {
+                send_disconnect_request(client);
+            }
+            client->running = 0;
+            break;
+            
+        } else {
+            printf("Unknown command: %s\n", command);
+            printf("Type 'help' for available commands\n");
+        }
+    }
 }

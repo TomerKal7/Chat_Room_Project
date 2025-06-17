@@ -225,7 +225,7 @@ struct leave_room_request {
 
 // Server -> Client: Response to leave room request
 struct leave_room_response {
-    uint16_t msg_type;        // LEAVE_ROOM_SUCCESS/LEAVE_ROOM_FAILED
+    uint16_t msg_type;        //LEAVE_ROOM_RESPONSE
     uint16_t msg_length;
     uint32_t timestamp;
     uint32_t session_token;
@@ -345,6 +345,24 @@ struct room_list_response {
     // uint16_t room_id + uint8_t room_name_len + char room_name[] + uint8_t user_count + uint8_t has_password
 } PACKED;
 
+// Client -> Server: Request list of users in current room
+struct user_list_request {  
+    uint16_t msg_type;        // USER_LIST_REQUEST
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint16_t room_id;         // Room to get user list from
+} PACKED;
+
+// Server -> Client: Response with user list in room
+struct user_list_response { 
+    uint16_t msg_type;        // USER_LIST_RESPONSE
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint8_t user_count;       // Number of users in the room
+    // Followed by user_count entries of:
+    // uint8_t username_len + char username[]
+} PACKED;
 // ================================
 // ERROR HANDLING
 // ================================
