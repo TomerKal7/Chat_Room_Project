@@ -25,7 +25,8 @@
     #include <arpa/inet.h>
     #include <netdb.h>
     #include <sys/select.h>    
-    #include <sys/time.h>      
+    #include <sys/time.h>   
+    #include <netinet/ip.h>
 #endif
 
 #include "client.h"
