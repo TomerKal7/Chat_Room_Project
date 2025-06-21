@@ -33,6 +33,18 @@
 #define RESPONSE_TIMEOUT_SEC    10
 #define SESSION_TIMEOUT_SEC     3600
 
+// ================================
+// HELPER MACROS AND CONSTANTS
+// ================================
+
+#define MAX_USERNAME_LEN    32
+#define MAX_PASSWORD_LEN    64
+#define MAX_ROOM_NAME_LEN   64
+#define MAX_MESSAGE_LEN     512
+#define MAX_ERROR_MSG_LEN   256
+
+// Session token validation
+#define INVALID_SESSION_TOKEN 0
 
 // ================================
 // MESSAGE TYPES DEFINITIONS
@@ -51,10 +63,11 @@ typedef enum {
     JOIN_ROOM_FAILED    = 0x0012,
     JOIN_ROOM_IN_PROGRESS = 0x0013,  // Server confirms join request received
     LEAVE_ROOM_REQUEST  = 0x0020,
-    LEAVE_ROOM_SUCCESS  = 0x0021,
+    LEAVE_ROOM_RESPONSE  = 0x0021,
     CREATE_ROOM_REQUEST = 0x0030,
-    CREATE_ROOM_SUCCESS = 0x0031,
-    CREATE_ROOM_FAILED  = 0x0032,
+    CREATE_ROOM_RESPONSE = 0x0031, // Response to create room request
+    CREATE_ROOM_SUCCESS = 0x0032,
+    CREATE_ROOM_FAILED  = 0x0033,
 
     // Chat messages
     CHAT_MESSAGE        = 0x0040,
@@ -186,12 +199,39 @@ struct create_room_request {
     uint8_t max_users;        // 0 = unlimited
 } PACKED;
 
+// Server -> Client: Response to create room request
+struct create_room_response {
+    uint16_t msg_type;        // CREATE_ROOM_SUCCESS/CREATE_ROOM_FAILED
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint16_t room_id;         // Unique room identifier
+    char room_name[32];    // Name of the created room
+    char multicast_addr[16];  // IP address for multicast (e.g., "239.1.1.5")
+    uint16_t multicast_port;  // Port for multicast
+    uint8_t error_code;       // 0=success, 1=room_name_exists, 2=server_room_limit_reached
+    uint8_t error_msg_len;    // Length of the error message
+    char error_msg[128];      // Error message if any
+} PACKED;
+
+
 // Client -> Server: Request to leave current room
 struct leave_room_request {
     uint16_t msg_type;        // LEAVE_ROOM_REQUEST
     uint16_t msg_length;
     uint32_t timestamp;
     uint32_t session_token;
+} PACKED;
+
+// Server -> Client: Response to leave room request
+struct leave_room_response {
+    uint16_t msg_type;        //LEAVE_ROOM_RESPONSE
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint8_t error_code;       // 0=success, 1=not_in_room, 2=room_not_found
+    uint8_t error_msg_len;    // Length of the error message
+    char error_msg[128];      // Error message if any
 } PACKED;
 
 // Server -> Client: Confirmation of join request received (JOINING ROOM state)
@@ -208,12 +248,15 @@ struct join_room_in_progress {
 // CHAT MESSAGES
 // ================================
 
-// Client -> Server: Regular chat message (server forwards via multicast)
+// Client -> Server: Regular chat message (server forwards to room)
 struct chat_message {
     uint16_t msg_type;        // CHAT_MESSAGE
     uint16_t msg_length;
     uint32_t timestamp;
     uint32_t session_token;
+    uint32_t room_id;         // Which room this message belongs to
+    uint8_t sender_username_len;
+    char sender_username[MAX_USERNAME_LEN];
     uint16_t message_len;
     char message[512];        // Max message length
 } PACKED;
@@ -260,6 +303,8 @@ struct disconnect_request {
     uint32_t session_token;
 } PACKED;
 
+
+
 // Server -> Client: Connection status notification
 struct connection_status {
     uint16_t msg_type;        // CONNECTION_LOST/CLIENT_KICKED/FORCE_DISCONNECT
@@ -300,6 +345,24 @@ struct room_list_response {
     // uint16_t room_id + uint8_t room_name_len + char room_name[] + uint8_t user_count + uint8_t has_password
 } PACKED;
 
+// Client -> Server: Request list of users in current room
+struct user_list_request {  
+    uint16_t msg_type;        // USER_LIST_REQUEST
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint16_t room_id;         // Room to get user list from
+} PACKED;
+
+// Server -> Client: Response with user list in room
+struct user_list_response { 
+    uint16_t msg_type;        // USER_LIST_RESPONSE
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint8_t user_count;       // Number of users in the room
+    // Followed by user_count entries of:
+    // uint8_t username_len + char username[]
+} PACKED;
 // ================================
 // ERROR HANDLING
 // ================================
@@ -313,18 +376,5 @@ struct error_message {
     uint8_t error_msg_len;
     char error_msg[256];
 } PACKED;
-
-// ================================
-// HELPER MACROS
-// ================================
-
-#define MAX_USERNAME_LEN    32
-#define MAX_PASSWORD_LEN    64
-#define MAX_ROOM_NAME_LEN   64
-#define MAX_MESSAGE_LEN     512
-#define MAX_ERROR_MSG_LEN   256
-
-// Session token validation
-#define INVALID_SESSION_TOKEN 0
 
 #endif // CHAT_PROTOCOL_H
