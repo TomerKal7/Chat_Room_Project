@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>  // ADD THIS at the top for isalnum() function
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -331,10 +332,25 @@ int is_valid_room_name(const char *name, int len) {
     return 1;
 }
 
-// Helper: Validate password
 int is_valid_password(const char *pw, int len) {
-    if (len < 0 || len >= 32) return 0;
-    return 1;
+    // Check length
+    if (len < 3 || len > 20) {
+        return 0;
+    }
+    
+    // Check for null or empty
+    if (pw == NULL || len == 0) {
+        return 0;
+    }
+    
+    // Check for valid characters (letters, numbers, basic symbols)
+    for (int i = 0; i < len; i++) {
+        if (!isalnum(pw[i]) && pw[i] != '_' && pw[i] != '-' && pw[i] != '.') {
+            return 0;
+        }
+    }
+    
+    return 1; // Valid password
 }
 
 int handle_create_room_request(server_t *server, int client_index, struct create_room_request *req) {

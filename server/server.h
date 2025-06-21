@@ -97,6 +97,7 @@ int send_multicast_message(server_t *server, int room_id, const char *message, s
 // Threading functions
 int init_threading(server_t *server);
 void cleanup_threading(server_t *server);
+int create_client_thread(server_t *server, int client_index);
 #ifdef _WIN32
 unsigned __stdcall client_thread_handler(void *arg);
 #else

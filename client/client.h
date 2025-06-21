@@ -40,6 +40,7 @@
 #define KEEPALIVE_INTERVAL 30
 #define RECONNECT_ATTEMPTS 3
 #define RECONNECT_DELAY 5
+#define IS_IN_ROOM(client) ((client)->current_room_id != -1)
 
 // ================================
 // CLIENT STRUCTURE
@@ -123,8 +124,8 @@ int handle_private_message(client_t *client, void *message_data);
 
 int send_room_list_request(client_t *client);
 int send_user_list_request(client_t *client);
-int handle_room_list_response(client_t *client, void *response_data);
-int handle_user_list_response(client_t *client, void *response_data);
+void handle_room_list_response(client_t *client, char *buffer, size_t buffer_size);
+void handle_user_list_response(client_t *client, char *buffer, size_t buffer_size);
 
 // ================================
 // CONNECTION MANAGEMENT FUNCTIONS
@@ -150,6 +151,7 @@ int handle_multicast_message(client_t *client, void *message_data, size_t data_l
 // ================================
 
 int handle_server_response(client_t *client, void *response_data, size_t data_len);
+void handle_enhanced_user_input(client_t *client);
 int handle_user_joined_notification(client_t *client, void *notification_data);
 int handle_user_left_notification(client_t *client, void *notification_data);
 int handle_error_message(client_t *client, void *error_data);

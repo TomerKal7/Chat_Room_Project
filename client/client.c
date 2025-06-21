@@ -24,6 +24,8 @@
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <netdb.h>
+    #include <sys/select.h>    
+    #include <sys/time.h>      
 #endif
 
 #include "client.h"
@@ -624,6 +626,7 @@ int send_leave_room_request(client_t *client) {
 // Replace the broken handle_room_list_response function with this:
 
 void handle_room_list_response(client_t *client, char *buffer, size_t buffer_size) {
+    (void)client; // Unused parameter, but could be used for logging
     if (buffer_size < 9) { // Minimum: 2+2+4+1 = 9 bytes
         printf("Invalid room list response size\n");
         return;
@@ -635,12 +638,15 @@ void handle_room_list_response(client_t *client, char *buffer, size_t buffer_siz
     
     // Read header
     uint16_t msg_type = *(uint16_t*)ptr;
+    (void)msg_type; // We don't use msg_type here, but could log it
     ptr += sizeof(uint16_t);
     
     uint16_t msg_length = *(uint16_t*)ptr;
+    (void)msg_length; // We don't use msg_length here, but could log it
     ptr += sizeof(uint16_t);
     
     uint32_t timestamp = *(uint32_t*)ptr;
+    (void)timestamp; // We don't use timestamp here, but could log it
     ptr += sizeof(uint32_t);
     
     uint8_t room_count = *(uint8_t*)ptr;
