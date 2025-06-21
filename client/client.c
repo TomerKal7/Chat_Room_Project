@@ -26,7 +26,7 @@
     #include <netdb.h>
     #include <sys/select.h>    
     #include <sys/time.h>   
-    #include <netinet/ip.h>
+    #include <linux/in.h>  
 #endif
 
 #include "client.h"
