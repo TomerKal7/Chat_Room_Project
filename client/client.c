@@ -26,7 +26,14 @@
     #include <netdb.h>
     #include <sys/select.h>    
     #include <sys/time.h>   
-    #include <linux/in.h>  
+    #ifndef IP_ADD_MEMBERSHIP
+    struct ip_mreq {
+        struct in_addr imr_multiaddr;  // multicast address
+        struct in_addr imr_interface;  // interface address
+    };
+    #define IP_ADD_MEMBERSHIP 35
+    #define IP_DROP_MEMBERSHIP 36
+    #endif  
 #endif
 
 #include "client.h"
