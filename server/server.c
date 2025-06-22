@@ -1290,7 +1290,7 @@ unsigned __stdcall client_thread_handler(void *arg) {
 #else
 void* client_thread_handler(void *arg) {
 #endif
-    client_thread_data_t *data = (client_thread_data_t*)arg;
+    client_thread_data_t *data =  (client_thread_data_t*)arg;
     server_t *server = data->server;
     int client_index = data->client_index;
     
@@ -1304,7 +1304,7 @@ void* client_thread_handler(void *arg) {
         FD_SET(server->clients[client_index].socket_fd, &read_fds);
         
         struct timeval timeout;
-        timeout.tv_sec = 1;  // 1 second timeout
+        timeout.tv_sec = 5;  //5 second timeout for testing
         timeout.tv_usec = 0;
         
         int activity = select(server->clients[client_index].socket_fd + 1, &read_fds, NULL, NULL, &timeout);
