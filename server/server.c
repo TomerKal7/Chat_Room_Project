@@ -1304,7 +1304,12 @@ void* client_thread_handler(void *arg) {
         FD_SET(server->clients[client_index].socket_fd, &read_fds);
         
         struct timeval timeout;
-        timeout.tv_sec = 5;  //5 second timeout for testing
+        // Check client state and set appropriate timeout
+        if (server->clients[client_index].state == CLIENT_AUTHENTICATING) {
+            timeout.tv_sec = 60;  // 60 seconds for login
+        } else {
+            timeout.tv_sec = 30;  // 30 seconds for normal operations
+        }
         timeout.tv_usec = 0;
         
         int activity = select(server->clients[client_index].socket_fd + 1, &read_fds, NULL, NULL, &timeout);
