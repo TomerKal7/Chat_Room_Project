@@ -13,8 +13,8 @@ NC='\033[0m' # No Color
 # Configuration
 SERVER_IP="127.0.0.1"
 SERVER_PORT="8080"
-CLIENT_EXEC="./client"
-SERVER_EXEC="./server"
+CLIENT_EXEC="./build/client"
+SERVER_EXEC="./build/server"
 TEST_TIMEOUT=30
 
 # Print functions
@@ -81,7 +81,7 @@ test_server_startup() {
     SERVER_PID=$!
     
     # Wait for server to start
-    sleep 2
+    sleep 3
     
     # Check if server is running
     if kill -0 $SERVER_PID 2>/dev/null; then
@@ -98,7 +98,6 @@ test_server_startup() {
 test_client_connection() {
     print_status "Testing basic client connection..."
     
-    # Create a simple test client script
     cat > test_client_script.txt << EOF
 help
 quit
@@ -106,7 +105,7 @@ EOF
     
     timeout 10s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < test_client_script.txt > client.log 2>&1
     
-    if [ $? -eq 0 ] || [ $? -eq 124 ]; then
+    if grep -q "help" client.log || grep -q "Available commands" client.log; then
         print_success "Client connection test passed"
         return 0
     else
@@ -117,19 +116,20 @@ EOF
     fi
 }
 
-# Test user authentication (login only, no register)
+# Test user authentication
 test_authentication() {
     print_status "Testing user authentication..."
     
     cat > auth_test.txt << EOF
 login testuser1 password123
+help
 quit
 EOF
     
     timeout 15s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < auth_test.txt > auth.log 2>&1
     
-    if grep -q "Login" auth.log; then
-        print_success "Authentication test completed"
+    if grep -q "logged in\|Login successful\|testuser1" auth.log; then
+        print_success "Authentication test passed"
         return 0
     else
         print_error "Authentication test failed"
@@ -145,17 +145,18 @@ test_room_operations() {
     
     cat > room_test.txt << EOF
 login roomuser password123
-create_room testroom
-join_room testroom
-list_rooms
-list_users
+create_room testroom testpass
+room_list
+join_room testroom testpass
+user_list
+leave_room
 quit
 EOF
     
     timeout 20s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < room_test.txt > room.log 2>&1
     
-    if grep -q "room\|Room" room.log; then
-        print_success "Room operations test completed"
+    if grep -q "room\|Room\|created\|joined" room.log; then
+        print_success "Room operations test passed"
         return 0
     else
         print_error "Room operations test failed"
@@ -171,17 +172,18 @@ test_chat_messaging() {
     
     cat > chat_test.txt << EOF
 login chatuser password123
-create_room chatroom
-join_room chatroom
-say Hello World!
-say This is a test message
+create_room chatroom chatpass
+join_room chatroom chatpass
+chat Hello World!
+chat This is a test message
+leave_room
 quit
 EOF
     
     timeout 20s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < chat_test.txt > chat.log 2>&1
     
-    if grep -q "Hello\|message\|chat" chat.log; then
-        print_success "Chat messaging test completed"
+    if grep -q "Hello\|message\|chat\|Message sent" chat.log; then
+        print_success "Chat messaging test passed"
         return 0
     else
         print_error "Chat messaging test failed"
@@ -191,7 +193,57 @@ EOF
     fi
 }
 
-# Test multiple concurrent clients
+# Test private messaging
+test_private_messaging() {
+    print_status "Testing private messaging..."
+    
+    cat > private_test.txt << EOF
+login privateuser password123
+create_room privateroom privatepass
+join_room privateroom privatepass
+private testuser1 Hello this is a private message
+quit
+EOF
+    
+    timeout 15s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < private_test.txt > private.log 2>&1
+    
+    if grep -q "private\|Private\|message" private.log; then
+        print_success "Private messaging test passed"
+        return 0
+    else
+        print_error "Private messaging test failed"
+        echo "Private log:"
+        cat private.log
+        return 1
+    fi
+}
+
+# Test invalid commands
+test_invalid_commands() {
+    print_status "Testing invalid command handling..."
+    
+    cat > invalid_test.txt << EOF
+login invaliduser password123
+invalid_command
+unknown_command test
+badcommand
+quit
+EOF
+    
+    timeout 15s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < invalid_test.txt > invalid.log 2>&1
+    
+    if grep -q "Unknown command\|Invalid\|help" invalid.log; then
+        print_success "Invalid command handling test passed"
+        return 0
+    else
+        print_error "Invalid command handling test failed"
+        echo "Invalid log:"
+        cat invalid.log
+        return 1
+    fi
+}
+
+# Test concurrent clients
 test_concurrent_clients() {
     print_status "Testing concurrent clients..."
     
@@ -199,9 +251,11 @@ test_concurrent_clients() {
     for i in {1..3}; do
         cat > client_${i}_test.txt << EOF
 login user${i} pass${i}
-create_room room${i}
-join_room room${i}
-say Hello from client ${i}
+create_room room${i} roompass${i}
+join_room room${i} roompass${i}
+chat Hello from client ${i}
+room_list
+user_list
 quit
 EOF
     done
@@ -214,8 +268,47 @@ EOF
     # Wait for all clients to finish
     wait
     
-    print_success "Concurrent client test completed"
-    return 0
+    # Check if at least one client succeeded
+    success=0
+    for i in {1..3}; do
+        if grep -q "user${i}\|room${i}\|Hello" client_${i}.log; then
+            success=1
+            break
+        fi
+    done
+    
+    if [ $success -eq 1 ]; then
+        print_success "Concurrent client test passed"
+        return 0
+    else
+        print_error "Concurrent client test failed"
+        return 1
+    fi
+}
+
+# Test room password validation
+test_room_password_validation() {
+    print_status "Testing room password validation..."
+    
+    cat > password_test.txt << EOF
+login passuser password123
+create_room secretroom secretpass
+join_room secretroom wrongpass
+join_room secretroom secretpass
+quit
+EOF
+    
+    timeout 15s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < password_test.txt > password.log 2>&1
+    
+    if grep -q "wrong\|incorrect\|failed\|success\|joined" password.log; then
+        print_success "Room password validation test passed"
+        return 0
+    else
+        print_error "Room password validation test failed"
+        echo "Password log:"
+        cat password.log
+        return 1
+    fi
 }
 
 # Main test execution
@@ -241,7 +334,7 @@ main() {
     if test_server_startup; then
         test_results+=("Server Startup: PASS")
         
-        # Run client tests
+        # Run all tests
         if test_client_connection; then
             test_results+=("Client Connection: PASS")
         else
@@ -266,10 +359,28 @@ main() {
             test_results+=("Chat Messaging: FAIL")
         fi
         
+        if test_private_messaging; then
+            test_results+=("Private Messaging: PASS")
+        else
+            test_results+=("Private Messaging: FAIL")
+        fi
+        
+        if test_invalid_commands; then
+            test_results+=("Invalid Commands: PASS")
+        else
+            test_results+=("Invalid Commands: FAIL")
+        fi
+        
         if test_concurrent_clients; then
             test_results+=("Concurrent Clients: PASS")
         else
             test_results+=("Concurrent Clients: FAIL")
+        fi
+        
+        if test_room_password_validation; then
+            test_results+=("Room Password Validation: PASS")
+        else
+            test_results+=("Room Password Validation: FAIL")
         fi
         
     else
