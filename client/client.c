@@ -373,7 +373,7 @@ int send_create_room_request(client_t *client, const char *room_name, const char
     } else {
         req.password_len = 0;
     }
-    req.max_users = 0; // unlimited
+    req.max_users = 20; // Default max users, can be changed later
     
     if (send(client->tcp_socket, (char*)&req, sizeof(req), 0) != sizeof(req)) {
         return -1;
