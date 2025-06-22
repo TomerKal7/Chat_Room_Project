@@ -1308,7 +1308,7 @@ void* client_thread_handler(void *arg) {
         if (server->clients[client_index].state == CLIENT_AUTHENTICATING) {
             timeout.tv_sec = 60;  // 60 seconds for login
         } else {
-            timeout.tv_sec = 30;  // 30 seconds for normal operations
+            timeout.tv_sec = 10;  // 30 seconds for normal operations
         }
         timeout.tv_usec = 0;
         
