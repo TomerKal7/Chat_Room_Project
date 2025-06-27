@@ -814,7 +814,20 @@ int send_disconnect_request(client_t *client) {
         return -1;
     }
     
-    printf("Disconnect request sent...\n");
+    // Receive response immediately (with short timeout since we're disconnecting)
+    struct disconnect_response resp;
+    ssize_t received = recv(client->tcp_socket, (char*)&resp, sizeof(resp), 0);
+    if (received == sizeof(resp)) {
+        if (resp.msg_type == DISCONNECT_SUCCESS) {
+            printf("Disconnected successfully. Goodbye!\n");
+        } else {
+            printf("Disconnect acknowledged\n");
+        }
+    } else {
+        // Server might close connection immediately, so this is normal
+        printf("Disconnecting...\n");
+    }
+    
     return 0;
 }
 

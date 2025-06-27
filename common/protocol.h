@@ -78,10 +78,11 @@ typedef enum {
     // Connection management
     KEEPALIVE           = 0x0070,
     DISCONNECT_REQUEST  = 0x0080,
-    DISCONNECT_ACK      = 0x0081,
-    CLIENT_KICKED       = 0x0082,  // Server kicks client
-    FORCE_DISCONNECT    = 0x0083,  // Server forces disconnection
-    CONNECTION_LOST     = 0x0084,  // Notification of lost connection
+    DISCONNECT_SUCCESS  = 0x0081,
+    DISCONNECT_ACK      = 0x0082,
+    CLIENT_KICKED       = 0x0083,  // Server kicks client
+    FORCE_DISCONNECT    = 0x0084,  // Server forces disconnection
+    CONNECTION_LOST     = 0x0085,  // Notification of lost connection
 
     // Error and status messages
     ERROR_MESSAGE       = 0x0090,
@@ -303,7 +304,16 @@ struct disconnect_request {
     uint32_t session_token;
 } PACKED;
 
-
+// Server -> Client: Response to disconnect request
+struct disconnect_response {
+    uint16_t msg_type;        // DISCONNECT_SUCCESS/DISCONNECT_ACK
+    uint16_t msg_length;
+    uint32_t timestamp;
+    uint32_t session_token;
+    uint8_t status_code;      // 0=success, 1=already_disconnected
+    uint8_t status_msg_len;
+    char status_msg[64];      // Optional goodbye message
+} PACKED;
 
 // Server -> Client: Connection status notification
 struct connection_status {
@@ -323,7 +333,7 @@ struct retry_connection {
     uint32_t session_token;   // Previous session token if available
 } PACKED;
 
-// ================================
+// ========================================
 // INFORMATION REQUESTS
 // ================================
 
@@ -340,7 +350,7 @@ struct room_list_response {
     uint16_t msg_type;        // ROOM_LIST_RESPONSE
     uint16_t msg_length;
     uint32_t timestamp;
-    uint8_t room_count;
+    uint8_t room_count;       // Count of rooms available
     // Followed by room_count entries of:
     // uint16_t room_id + uint8_t room_name_len + char room_name[] + uint8_t user_count + uint8_t has_password
 } PACKED;
@@ -349,7 +359,7 @@ struct room_list_response {
 struct user_list_request {  
     uint16_t msg_type;        // USER_LIST_REQUEST
     uint16_t msg_length;
-    uint32_t timestamp;
+    uint32_t timestamp;       // Room to get user list from
     uint32_t session_token;
     uint16_t room_id;         // Room to get user list from
 } PACKED;
@@ -363,6 +373,7 @@ struct user_list_response {
     // Followed by user_count entries of:
     // uint8_t username_len + char username[]
 } PACKED;
+
 // ================================
 // ERROR HANDLING
 // ================================
@@ -374,7 +385,7 @@ struct error_message {
     uint32_t timestamp;
     uint8_t error_code;       // Custom error codes
     uint8_t error_msg_len;
-    char error_msg[256];
+    char error_msg[256];      // Error message
 } PACKED;
 
 #endif // CHAT_PROTOCOL_H
