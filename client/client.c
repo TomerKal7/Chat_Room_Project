@@ -540,7 +540,16 @@ int send_room_list_request(client_t *client) {
         return -1;
     }
     
-    printf("Room list request sent...\n");
+    // Receive response immediately
+    char response_buffer[2048]; // Large enough for room list
+    ssize_t received = recv(client->tcp_socket, response_buffer, sizeof(response_buffer), 0);
+    if (received <= 0) {
+        printf("Failed to receive room list response\n");
+        return -1;
+    }
+    
+    // Process the response
+    handle_room_list_response(client, response_buffer, received);
     return 0;
 }
 
@@ -558,7 +567,7 @@ int send_user_list_request(client_t *client) {
     req.msg_length = sizeof(req);
     req.timestamp = time(NULL);
     req.session_token = client->session_token;
-    req.room_id = client->current_room_id;  // Optional: server can use client's current room
+    req.room_id = client->current_room_id;
     
     ssize_t sent = send(client->tcp_socket, (char*)&req, sizeof(req), 0);
     if (sent != sizeof(req)) {
@@ -566,7 +575,16 @@ int send_user_list_request(client_t *client) {
         return -1;
     }
     
-    printf("User list request sent for room %d...\n", client->current_room_id);
+    // Receive response immediately
+    char response_buffer[1024]; // Large enough for user list
+    ssize_t received = recv(client->tcp_socket, response_buffer, sizeof(response_buffer), 0);
+    if (received <= 0) {
+        printf("Failed to receive user list response\n");
+        return -1;
+    }
+    
+    // Process the response
+    handle_user_list_response(client, response_buffer, received);
     return 0;
 }
 
@@ -624,15 +642,22 @@ int send_leave_room_request(client_t *client) {
         return -1;
     }
     
-    printf("Leave room request sent...\n");
+    // Receive response immediately
+    struct leave_room_response resp;
+    ssize_t received = recv(client->tcp_socket, (char*)&resp, sizeof(resp), 0);
+    if (received != sizeof(resp)) {
+        printf("Failed to receive leave room response\n");
+        return -1;
+    }
+    
+    // Process the response
+    handle_leave_room_response(client, &resp);
     return 0;
 }
 
 // ================================
 // RESPONSE HANDLERS
 // ================================
-
-// Replace the broken handle_room_list_response function with this:
 
 void handle_room_list_response(client_t *client, char *buffer, size_t buffer_size) {
     (void)client; // Unused parameter, but could be used for logging
