@@ -322,6 +322,8 @@ int send_login_request(client_t *client, const char *username, const char *passw
     
     if (resp.msg_type == LOGIN_SUCCESS) {
         client->session_token = resp.session_token;
+        strncpy(client->username, username, sizeof(client->username) - 1);
+        printf("Login successful! Welcome %s\n", username);
         return 0;
     } else if (resp.msg_type == LOGIN_FAILED) {
         if (resp.error_msg_len > 0 && resp.error_msg_len < sizeof(resp.error_msg)) {
@@ -353,7 +355,14 @@ int send_chat_message(client_t *client, const char *message) {
     msg.message_len = strlen(message);
     strncpy(msg.message, message, 512 - 1);
     
-    return (send(client->tcp_socket, (char*)&msg, sizeof(msg), 0) == sizeof(msg)) ? 0 : -1;
+    int result = send(client->tcp_socket, (char*)&msg, sizeof(msg), 0);
+    if (result == sizeof(msg)) {
+        printf("Message sent successfully!\n");
+        return 0;
+    } else {
+        printf("Failed to send message\n");
+        return -1;
+    }
 }
 
 int send_create_room_request(client_t *client, const char *room_name, const char *password) {
@@ -393,6 +402,7 @@ int send_create_room_request(client_t *client, const char *room_name, const char
         client->multicast_addr.sin_port = htons(resp.multicast_port);
         inet_pton(AF_INET, resp.multicast_addr, &client->multicast_addr.sin_addr);
         
+        printf("Room '%s' created successfully! You are now in the room.\n", room_name);
         return 0;
     } else if (resp.msg_type == CREATE_ROOM_FAILED) {
         if (resp.error_msg_len > 0 && resp.error_msg_len < sizeof(resp.error_msg)) {
@@ -482,6 +492,8 @@ int send_join_room_request(client_t *client, const char *room_name, const char *
             }        } else {
             perror("Failed to bind UDP socket");
         }
+        strncpy(client->current_room, room_name, MAX_ROOM_NAME_LEN - 1);
+        printf("Successfully joined room '%s'!\n", room_name);
         return 0;
     } else if (resp.msg_type == JOIN_ROOM_FAILED) {
         if (resp.error_msg_len > 0 && resp.error_msg_len < sizeof(resp.error_msg)) {
@@ -507,7 +519,14 @@ int send_private_message(client_t *client, const char *target_username, const ch
     msg.message_len = strlen(message);
     strncpy(msg.message, message, 512 - 1);
     
-    return (send(client->tcp_socket, (char*)&msg, sizeof(msg), 0) == sizeof(msg)) ? 0 : -1;
+    int result = send(client->tcp_socket, (char*)&msg, sizeof(msg), 0);
+    if (result == sizeof(msg)) {
+        printf("Private message sent to %s successfully!\n", target_username);
+        return 0;
+    } else {
+        printf("Failed to send private message\n");
+        return -1;
+    }
 }
 
 void print_menu() {
