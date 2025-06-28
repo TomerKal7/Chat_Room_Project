@@ -489,7 +489,11 @@ int send_join_room_request(client_t *client, const char *room_name, const char *
             if (setsockopt(client->udp_socket, IPPROTO_IP, IP_ADD_MEMBERSHIP,
                          (const char*)&mreq, sizeof(mreq)) != 0) {
                 perror("Failed to join multicast group");
-            }        } else {
+            } else {
+                printf("Successfully joined multicast group %s:%d for room %s\n", 
+                       resp.multicast_addr, resp.multicast_port, room_name);
+            }
+        } else {
             perror("Failed to bind UDP socket");
         }
         strncpy(client->current_room, room_name, MAX_ROOM_NAME_LEN - 1);

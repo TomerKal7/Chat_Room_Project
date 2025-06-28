@@ -22,7 +22,12 @@
 
 #define DEFAULT_TCP_PORT        8080
 #define MULTICAST_PORT_START    9000
-#define MULTICAST_BASE_IP       "239.1.1."
+#define MULTICAST_BASE_IP       "224.1.1."  // Global scope for multi-hop
+
+// Multicast TTL for lab environment (configurable)
+#define MULTICAST_TTL_DEFAULT   32   // Allow 32 hops for lab topology
+#define MULTICAST_TTL_LAN       1    // For single LAN testing
+#define MULTICAST_TTL_LAB       64   // For complex lab topologies
 
 // ================================
 // TIMING CONFIGURATION

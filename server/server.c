@@ -1138,8 +1138,8 @@ int init_multicast_socket(server_t *server) {
         return -1;
     }
     
-    // Set multicast TTL
-    int ttl = 1; // Local network only
+    // Set multicast TTL for lab environment (multi-hop)
+    int ttl = MULTICAST_TTL_DEFAULT; // 32 hops for lab topology
     if (setsockopt(server->multicast_socket, IPPROTO_IP, IP_MULTICAST_TTL,
                    (char*)&ttl, sizeof(ttl)) < 0) {
         perror("Failed to set multicast TTL");
@@ -1147,7 +1147,7 @@ int init_multicast_socket(server_t *server) {
         return -1;
     }
     
-    printf("Multicast socket initialized successfully\n");
+    printf("Multicast socket initialized with TTL=%d for lab environment\n", ttl);
     return 0;
 }
 
