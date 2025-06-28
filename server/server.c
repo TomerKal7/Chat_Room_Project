@@ -724,6 +724,18 @@ int handle_disconnect_request(server_t *server, int client_index) {
     
     client_t *client = &server->clients[client_index];
     
+    // Send disconnect response first
+    struct disconnect_response resp;
+    memset(&resp, 0, sizeof(resp));
+    resp.msg_type = DISCONNECT_SUCCESS;
+    resp.msg_length = sizeof(resp);
+    resp.timestamp = time(NULL);
+    resp.session_token = client->session_token;
+    resp.status_code = 0; // Success
+    resp.status_msg_len = 0;
+    
+    send(client->socket_fd, &resp, sizeof(resp), 0);
+    
     // If client is in a room, remove them from it first
     if (client->state == CLIENT_IN_ROOM && client->current_room_id >= 0) {
         printf("Client %d leaving room %d before disconnect\n", client_index, client->current_room_id);

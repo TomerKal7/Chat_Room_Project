@@ -227,12 +227,11 @@ void *udp_receiver_thread(void *arg) {
                         chat_msg->message_len > 0) {
                         
                         // Don't display our own messages
-                        if (strncmp(chat_msg->sender_username, client->username, chat_msg->sender_username_len) != 0) {
-                            printf("\n[%.*s]: %.*s\n> ", 
-                                   (int)chat_msg->sender_username_len, chat_msg->sender_username,
-                                   (int)chat_msg->message_len, chat_msg->message);
-                            fflush(stdout);
-                        }
+                        // Show ALL messages including your own (remove the filter)
+                        printf("\n[%.*s]: %.*s\n> ", 
+                               (int)chat_msg->sender_username_len, chat_msg->sender_username,
+                               (int)chat_msg->message_len, chat_msg->message);
+                        fflush(stdout);
                     }
                 } else if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
                     struct private_message *priv_msg = (struct private_message*)buffer;
@@ -357,7 +356,7 @@ int send_chat_message(client_t *client, const char *message) {
     
     int result = send(client->tcp_socket, (char*)&msg, sizeof(msg), 0);
     if (result == sizeof(msg)) {
-        printf("Message sent successfully!\n");
+        // Remove the annoying success message
         return 0;
     } else {
         printf("Failed to send message\n");
@@ -402,7 +401,7 @@ int send_create_room_request(client_t *client, const char *room_name, const char
         client->multicast_addr.sin_port = htons(resp.multicast_port);
         inet_pton(AF_INET, resp.multicast_addr, &client->multicast_addr.sin_addr);
         
-        printf("Room '%s' created successfully! You are now in the room.\n", room_name);
+        printf("Room '%s' created successfully! Use 'join_room %s' to start chatting.\n", room_name, room_name);
         return 0;
     } else if (resp.msg_type == CREATE_ROOM_FAILED) {
         if (resp.error_msg_len > 0 && resp.error_msg_len < sizeof(resp.error_msg)) {

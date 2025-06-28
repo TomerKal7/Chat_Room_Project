@@ -219,7 +219,7 @@ EOF
     
     timeout 20s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < chat_test.txt > chat.log 2>&1
     
-    if grep -q "Hello\|message\|chat\|Message sent\|chatroom\|chatuser" chat.log; then
+    if grep -q "Hello\|message\|chat\|chatroom\|chatuser\|joined" chat.log; then
         print_success "Chat messaging test passed"
         return 0
     else
