@@ -1021,10 +1021,18 @@ void print_help() {
 void handle_enhanced_user_input(client_t *client) {
     char input[MAX_INPUT_SIZE];
     char *command, *args;
+    time_t last_keepalive = time(NULL);  // ← Track last keepalive time
     
     while (client->running) {
         printf("> ");
         fflush(stdout);
+        
+        // Send keepalive every 20 seconds ← AUTOMATIC KEEPALIVE
+        time_t now = time(NULL);
+        if (client->session_token != 0 && difftime(now, last_keepalive) > 20) {
+            send_keepalive(client);
+            last_keepalive = now;
+        }
         
         if (!fgets(input, sizeof(input), stdin)) {
             break;

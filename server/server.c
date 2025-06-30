@@ -1320,7 +1320,7 @@ void* client_thread_handler(void *arg) {
         if (server->clients[client_index].state == CLIENT_AUTHENTICATING) {
             timeout.tv_sec = 60;  // 60 seconds for login
         } else {
-            timeout.tv_sec = 10;  // 30 seconds for normal operations
+            timeout.tv_sec = 30;  // Increase from 10 to 30 seconds for lab environment
         }
         timeout.tv_usec = 0;
         
@@ -1337,7 +1337,15 @@ void* client_thread_handler(void *arg) {
             // Handle client message
             if (handle_client_message(server, client_index) < 0) {
                 printf("Client %d disconnected in thread\n", client_index);
+                
+                // Store socket fd before clearing
+                int socket_fd = server->clients[client_index].socket_fd;
+                
                 close(server->clients[client_index].socket_fd);
+                
+                // Remove from master_fds (THIS WAS MISSING!)
+                FD_CLR(socket_fd, &server->master_fds);
+                
                 server->clients[client_index].is_active = 0;
                 memset(&server->clients[client_index], 0, sizeof(client_t));
             }
@@ -1362,7 +1370,15 @@ void* client_thread_handler(void *arg) {
 #endif
             
             printf("Client %d timed out in thread\n", client_index);
+            
+            // Store socket fd before clearing
+            int socket_fd = server->clients[client_index].socket_fd;
+            
             close(server->clients[client_index].socket_fd);
+            
+            // Remove from master_fds (THIS WAS MISSING!)
+            FD_CLR(socket_fd, &server->master_fds);
+            
             server->clients[client_index].is_active = 0;
             memset(&server->clients[client_index], 0, sizeof(client_t));
             
