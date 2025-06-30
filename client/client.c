@@ -238,7 +238,9 @@ void *udp_receiver_thread(void *arg) {
                     if (priv_msg->target_username_len < 32 && 
                         priv_msg->message_len < 512 && 
                         priv_msg->message_len > 0) {
-                        printf("\n[PRIVATE]: %.*s\n> ", 
+                        // Show private messages in chat format with [PRIVATE] indicator
+                        printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
+                               (int)priv_msg->target_username_len, priv_msg->target_username,
                                (int)priv_msg->message_len, priv_msg->message);
                         fflush(stdout);
                     }
@@ -524,7 +526,8 @@ int send_private_message(client_t *client, const char *target_username, const ch
     
     int result = send(client->tcp_socket, (char*)&msg, sizeof(msg), 0);
     if (result == sizeof(msg)) {
-        printf("Private message sent to %s successfully!\n", target_username);
+        // Show sent private message to sender for confirmation
+        printf("[PRIVATE to %s]: %s\n", target_username, message);
         return 0;
     } else {
         printf("Failed to send private message\n");
