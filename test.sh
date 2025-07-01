@@ -303,13 +303,23 @@ quit
 EOF
     done
     
-    # Start multiple clients in background
+    # Start multiple clients in background with shorter timeout
     for i in {1..3}; do
-        timeout 15s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < client_${i}_test.txt > client_${i}.log 2>&1 &
+        timeout 10s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < client_${i}_test.txt > client_${i}.log 2>&1 &
     done
     
-    # Wait for all clients to finish
-    wait
+    # Wait for all background processes with timeout
+    local wait_count=0
+    while [ $wait_count -lt 15 ]; do
+        if ! jobs %1 %2 %3 2>/dev/null | grep -q Running; then
+            break
+        fi
+        sleep 1
+        ((wait_count++))
+    done
+    
+    # Kill any remaining background processes
+    jobs -p | xargs -r kill 2>/dev/null
     
     # Check if at least one client succeeded
     success=0
