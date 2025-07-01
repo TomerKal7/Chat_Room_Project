@@ -1290,3 +1290,193 @@ int create_client_thread(server_t *server, int client_index) {
     printf("Thread created for client %d in slot %d\n", client_index, thread_slot);
     return 0;
 }
+
+int handle_room_list_request(server_t *server, int client_index) {
+    client_t *client = &server->clients[client_index];
+    
+    // Validate client authentication (though room list might be allowed for any connected client)
+    if (client->state == CLIENT_DISCONNECTED) {
+        printf("Room list request from disconnected client %d\n", client_index);
+        send_error_response(client->socket_fd, "Not connected");
+        return -1;
+    }
+    
+    printf("Room list request from client %d\n", client_index);
+    
+    // Count active rooms first
+    uint8_t active_room_count = 0;
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (server->rooms[i].is_active) {
+            active_room_count++;
+        }
+    }
+    
+    // Calculate total message size
+    size_t base_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    size_t rooms_data_size = 0;
+    
+    // Calculate room data size
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (server->rooms[i].is_active) {
+            rooms_data_size += sizeof(uint16_t) + // room_id
+                              sizeof(uint8_t) +   // room_name_len
+                              strlen(server->rooms[i].room_name) + // room_name
+                              sizeof(uint8_t) +   // user_count
+                              sizeof(uint8_t);    // has_password
+        }
+    }
+    
+    size_t total_size = base_size + rooms_data_size;
+    
+    // Allocate buffer for response
+    char *response_buffer = malloc(total_size);
+    if (!response_buffer) {
+        printf("Memory allocation failed for room list response\n");
+        send_error_response(client->socket_fd, "Server error");
+        return -1;
+    }
+    
+    // Build response
+    char *ptr = response_buffer;
+    
+    // Header
+    *(uint16_t*)ptr = ROOM_LIST_RESPONSE;
+    ptr += sizeof(uint16_t);
+    
+    *(uint16_t*)ptr = (uint16_t)total_size;
+    ptr += sizeof(uint16_t);
+    
+    *(uint32_t*)ptr = time(NULL);
+    ptr += sizeof(uint32_t);
+    
+    *(uint8_t*)ptr = active_room_count;
+    ptr += sizeof(uint8_t);
+    
+    // Add room data
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        if (server->rooms[i].is_active) {
+            // room_id
+            *(uint16_t*)ptr = (uint16_t)server->rooms[i].room_id;
+            ptr += sizeof(uint16_t);
+            
+            // room_name_len and room_name
+            uint8_t name_len = strlen(server->rooms[i].room_name);
+            *(uint8_t*)ptr = name_len;
+            ptr += sizeof(uint8_t);
+            
+            memcpy(ptr, server->rooms[i].room_name, name_len);
+            ptr += name_len;
+            
+            // user_count
+            *(uint8_t*)ptr = (uint8_t)server->rooms[i].client_count;
+            ptr += sizeof(uint8_t);
+            
+            // has_password
+            *(uint8_t*)ptr = (strlen(server->rooms[i].password) > 0) ? 1 : 0;
+            ptr += sizeof(uint8_t);
+        }
+    }
+    
+    // Send response
+    int sent = send(client->socket_fd, response_buffer, total_size, 0);
+    free(response_buffer);
+    
+    if (sent == -1) {
+        printf("Failed to send room list to client %d\n", client_index);
+        return -1;
+    }
+    
+    printf("Room list sent to client %d (%d active rooms)\n", client_index, active_room_count);
+    return 0;
+}
+
+int handle_user_list_request(server_t *server, int client_index) {
+    client_t *client = &server->clients[client_index];
+    
+    // Validate client authentication and that they're in a room
+    if (client->state != CLIENT_IN_ROOM || client->current_room_id < 0) {
+        printf("User list request from client %d not in a room\n", client_index);
+        send_error_response(client->socket_fd, "Not in a room");
+        return -1;
+    }
+    
+    printf("User list request from client %d for room %d\n", client_index, client->current_room_id);
+    
+    // Count users in the same room
+    uint8_t user_count = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].is_active && 
+            server->clients[i].state == CLIENT_IN_ROOM &&
+            server->clients[i].current_room_id == client->current_room_id) {
+            user_count++;
+        }
+    }
+    
+    // Calculate total message size
+    size_t base_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t);
+    size_t users_data_size = 0;
+    
+    // Calculate user data size
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].is_active && 
+            server->clients[i].state == CLIENT_IN_ROOM &&
+            server->clients[i].current_room_id == client->current_room_id) {
+            users_data_size += sizeof(uint8_t) + // username_len
+                              strlen(server->clients[i].username); // username
+        }
+    }
+    
+    size_t total_size = base_size + users_data_size;
+    
+    // Allocate buffer for response
+    char *response_buffer = malloc(total_size);
+    if (!response_buffer) {
+        printf("Memory allocation failed for user list response\n");
+        send_error_response(client->socket_fd, "Server error");
+        return -1;
+    }
+    
+    // Build response
+    char *ptr = response_buffer;
+    
+    // Header
+    *(uint16_t*)ptr = USER_LIST_RESPONSE;
+    ptr += sizeof(uint16_t);
+    
+    *(uint16_t*)ptr = (uint16_t)total_size;
+    ptr += sizeof(uint16_t);
+    
+    *(uint32_t*)ptr = time(NULL);
+    ptr += sizeof(uint32_t);
+    
+    *(uint8_t*)ptr = user_count;
+    ptr += sizeof(uint8_t);
+    
+    // Add user data (format: username_len + username)
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].is_active && 
+            server->clients[i].state == CLIENT_IN_ROOM &&
+            server->clients[i].current_room_id == client->current_room_id) {
+            
+            uint8_t username_len = strlen(server->clients[i].username);
+            *(uint8_t*)ptr = username_len;
+            ptr += sizeof(uint8_t);
+            
+            memcpy(ptr, server->clients[i].username, username_len);
+            ptr += username_len;
+        }
+    }
+    
+    // Send response
+    int sent = send(client->socket_fd, response_buffer, total_size, 0);
+    free(response_buffer);
+    
+    if (sent == -1) {
+        printf("Failed to send user list to client %d\n", client_index);
+        return -1;
+    }
+    
+    printf("User list sent to client %d (%d users in room %d)\n", 
+           client_index, user_count, client->current_room_id);
+    return 0;
+}
