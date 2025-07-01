@@ -200,20 +200,27 @@ void *udp_receiver_thread(void *arg) {
         
         FD_ZERO(&read_fds);
         FD_SET(client->udp_socket, &read_fds);
+        
+        // ALSO monitor TCP socket for private messages
+        FD_SET(client->tcp_socket, &read_fds);
+        
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         
         #ifdef _WIN32
+        int max_fd = (client->udp_socket > client->tcp_socket) ? client->udp_socket : client->tcp_socket;
         int result = select(0, &read_fds, NULL, NULL, &timeout);
         #else
-        int result = select(client->udp_socket + 1, &read_fds, NULL, NULL, &timeout);
+        int max_fd = (client->udp_socket > client->tcp_socket) ? client->udp_socket : client->tcp_socket;
+        int result = select(max_fd + 1, &read_fds, NULL, NULL, &timeout);
         #endif
         
+        // Handle UDP multicast messages (chat, notifications)
         if (result > 0 && FD_ISSET(client->udp_socket, &read_fds)) {
             ssize_t bytes_received = recvfrom(client->udp_socket, buffer, 
                                             sizeof(buffer) - 1, 0,
                                             (struct sockaddr*)&sender_addr, &addr_len);
-              if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
+            if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
                 buffer[bytes_received] = '\0';
                 
                 // Parse multicast message with proper validation
@@ -226,22 +233,9 @@ void *udp_receiver_thread(void *arg) {
                         chat_msg->sender_username_len > 0 && 
                         chat_msg->message_len > 0) {
                         
-                        // Don't display our own messages
-                        // Show ALL messages including your own (remove the filter)
                         printf("\n[%.*s]: %.*s\n> ", 
                                (int)chat_msg->sender_username_len, chat_msg->sender_username,
                                (int)chat_msg->message_len, chat_msg->message);
-                        fflush(stdout);
-                    }
-                } else if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
-                    struct private_message *priv_msg = (struct private_message*)buffer;
-                    if (priv_msg->target_username_len < 32 && 
-                        priv_msg->message_len < 512 && 
-                        priv_msg->message_len > 0) {
-                        // Show private messages in chat format with [PRIVATE] indicator
-                        printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
-                               (int)priv_msg->target_username_len, priv_msg->target_username,
-                               (int)priv_msg->message_len, priv_msg->message);
                         fflush(stdout);
                     }
                 } else if (header->msg_type == USER_JOINED_ROOM && bytes_received >= (ssize_t)sizeof(struct user_notification)) {
@@ -264,6 +258,34 @@ void *udp_receiver_thread(void *arg) {
                 }
             }
         }
+        
+        // Handle TCP private messages
+        if (result > 0 && FD_ISSET(client->tcp_socket, &read_fds)) {
+            ssize_t bytes_received = recv(client->tcp_socket, buffer, sizeof(buffer) - 1, 0);
+            if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
+                buffer[bytes_received] = '\0';
+                
+                struct message_header *header = (struct message_header*)buffer;
+                if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
+                    struct private_message *priv_msg = (struct private_message*)buffer;
+                    if (priv_msg->target_username_len < 32 && 
+                        priv_msg->message_len < 512 && 
+                        priv_msg->message_len > 0) {
+                        // Show private messages received via TCP
+                        printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
+                               (int)priv_msg->target_username_len, priv_msg->target_username,
+                               (int)priv_msg->message_len, priv_msg->message);
+                        fflush(stdout);
+                    }
+                }
+            } else if (bytes_received <= 0) {
+                // Server closed TCP connection
+                printf("\nServer disconnected\n");
+                client->running = 0;
+                break;
+            }
+        }
+        
         #ifdef _WIN32
         else if (result == SOCKET_ERROR) {
             if (WSAGetLastError() != WSAETIMEDOUT) {

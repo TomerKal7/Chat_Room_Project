@@ -878,66 +878,34 @@ int handle_private_message(server_t *server, int client_index, struct private_me
     
     client_t *target = &server->clients[target_index];
     
-    // Send private message via multicast to target's current room
-    // This ensures they receive it through their UDP listener
-    if (target->state == CLIENT_IN_ROOM && target->current_room_id > 0) {
-        // Create a special private message for multicast
-        struct private_message multicast_msg;
-        memset(&multicast_msg, 0, sizeof(multicast_msg));
-        multicast_msg.msg_type = PRIVATE_MESSAGE;
-        multicast_msg.timestamp = time(NULL);
-        multicast_msg.target_username_len = strlen(sender->username);
-        strncpy(multicast_msg.target_username, sender->username, sizeof(multicast_msg.target_username) - 1);
-        multicast_msg.message_len = message_len;
-        memcpy(multicast_msg.message, message_content, message_len);
-        multicast_msg.msg_length = sizeof(multicast_msg);
-        
-        // Send to target's room multicast address
-        int result = send_multicast_message(server, target->current_room_id, 
-                                           (char*)&multicast_msg, sizeof(multicast_msg));
-        
+    // ALWAYS send private messages via direct TCP (unicast only!)
+    struct private_message forward_msg;
+    memset(&forward_msg, 0, sizeof(forward_msg));
+    forward_msg.msg_type = PRIVATE_MESSAGE;
+    forward_msg.timestamp = time(NULL);
+    forward_msg.session_token = 0;
+    forward_msg.target_username_len = strlen(sender->username);
+    strncpy(forward_msg.target_username, sender->username, sizeof(forward_msg.target_username) - 1);
+    forward_msg.message_len = message_len;
+    memcpy(forward_msg.message, message_content, message_len);
+    forward_msg.msg_length = sizeof(forward_msg);
+    
+    // Send directly to target via TCP (unicast)
+    int sent = send(target->socket_fd, &forward_msg, sizeof(forward_msg), 0);
+    
 #ifdef _WIN32
-        ReleaseMutex(server->client_mutex);
+    ReleaseMutex(server->client_mutex);
 #else
-        pthread_mutex_unlock(&server->client_mutex);
+    pthread_mutex_unlock(&server->client_mutex);
 #endif
-        
-        if (result == 0) {
-            printf("Private message delivered via multicast from %s to %s\n", sender->username, target_username);
-            return 0;
-        } else {
-            printf("Failed to send private message via multicast\n");
-            return -1;
-        }
+    
+    if (sent != -1) {
+        printf("Private message delivered via TCP unicast from %s to %s\n", sender->username, target_username);
+        return 0;
     } else {
-        // Target not in room, send via direct TCP (original method)
-        struct private_message forward_msg;
-        memset(&forward_msg, 0, sizeof(forward_msg));
-        forward_msg.msg_type = PRIVATE_MESSAGE;
-        forward_msg.timestamp = time(NULL);
-        forward_msg.session_token = 0;
-        forward_msg.target_username_len = strlen(sender->username);
-        strncpy(forward_msg.target_username, sender->username, sizeof(forward_msg.target_username) - 1);
-        forward_msg.message_len = message_len;
-        memcpy(forward_msg.message, message_content, message_len);
-        forward_msg.msg_length = sizeof(forward_msg);
-        
-        int sent = send(target->socket_fd, &forward_msg, sizeof(forward_msg), 0);
-        
-#ifdef _WIN32
-        ReleaseMutex(server->client_mutex);
-#else
-        pthread_mutex_unlock(&server->client_mutex);
-#endif
-        
-        if (sent != -1) {
-            printf("Private message delivered via TCP from %s to %s\n", sender->username, target_username);
-            return 0;
-        } else {
-            printf("Failed to send private message via TCP\n");
-            send_error_response(sender->socket_fd, "Failed to deliver message");
-            return -1;
-        }
+        printf("Failed to send private message via TCP\n");
+        send_error_response(sender->socket_fd, "Failed to deliver message");
+        return -1;
     }
 }
 
