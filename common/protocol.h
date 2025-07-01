@@ -33,8 +33,8 @@
 // TIMING CONFIGURATION
 // ================================
 
-#define KEEPALIVE_INTERVAL_SEC  25
-#define CONNECTION_TIMEOUT_SEC  60
+#define KEEPALIVE_INTERVAL_SEC  20   // Changed from 25 to match client (20s)
+#define CONNECTION_TIMEOUT_SEC  120  // Changed from 60 to 120 for lab testing
 #define RESPONSE_TIMEOUT_SEC    10
 #define SESSION_TIMEOUT_SEC     3600
 
