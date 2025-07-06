@@ -13,6 +13,7 @@
 #include <netinet/in.h>
 #endif
 #include "server.h"
+#include "../common/protocol.h"
 
 int main() {
     printf("Chat server starting...\n");
@@ -250,16 +251,21 @@ int handle_new_connection(server_t *server) {
 
 // Function to handle messages from a client
 int handle_client_message(server_t *server, int client_index) {
+    printf("Handling message from client %d\n", client_index);
     char buffer[1024];
     memset(buffer, 0, sizeof(buffer)); // Clear the buffer
 
     // Read message from the client
     int bytes_received = recv(server->clients[client_index].socket_fd, buffer, sizeof(buffer) - 1, 0);// field: socket, buffer to store data, size of buffer - 1, flags (0 for no flags)
+    printf("Client %d: recv() returned %d bytes\n", client_index, bytes_received);
 
     if (bytes_received <= 0) {
         if (bytes_received < 0) {
             perror("recv error");
+            printf("Client %d: Connection closed by client\n", client_index);
+
         } else {
+            printf("Client %d: recv() error: errno=%d\n", client_index, errno);
             printf("Client %d disconnected\n", client_index);
         }
         return -1; // Client disconnected or error
