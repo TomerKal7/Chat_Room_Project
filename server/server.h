@@ -23,8 +23,8 @@
 // Server configuration
 #define MAX_CLIENTS 50
 #define MAX_ROOMS 20
-#define MULTICAST_BASE_ADDR "239.0.0.0"
-#define MULTICAST_BASE_PORT 40000
+#define MULTICAST_BASE_ADDR "224.1.1.0"
+#define MULTICAST_BASE_PORT 9000
 #define THREAD_POOL_SIZE 10
 
 // Client states - state machine
