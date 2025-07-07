@@ -278,10 +278,9 @@ void *udp_receiver_thread(void *arg) {
                         fflush(stdout);
                     }
                 }
-            } else if (bytes_received <= 0) {
+            } else if (bytes_received < 0) {
                 // Server closed TCP connection
                 printf("\nServer disconnected\n");
-                client->running = 0;
                 break;
             }
         }
@@ -320,7 +319,6 @@ int send_login_request(client_t *client, const char *username, const char *passw
     #ifdef _WIN32
     if (bytes_sent == SOCKET_ERROR || bytes_sent != sizeof(req)) {
         printf("Failed to send login request: %d\n", WSAGetLastError());
-        client->running = 0;
         return -1;
     }
     #else
@@ -385,7 +383,6 @@ int send_chat_message(client_t *client, const char *message) {
         return 0;
     } else {
         printf("Failed to send message\n");
-        client->running = 0;
         return -1;
     }
 }
@@ -410,7 +407,6 @@ int send_create_room_request(client_t *client, const char *room_name, const char
     req.max_users = 20; // Default max users, can be changed later
     
     if (send(client->tcp_socket, (char*)&req, sizeof(req), 0) != sizeof(req)) {
-        client->running = 0;
         return -1;
     }
     
@@ -1054,6 +1050,7 @@ void handle_enhanced_user_input(client_t *client) {
     while (client->running) {
         printf("> ");
         fflush(stdout);
+        printf("DEBUG: client->running=%d, waiting for input...\n", client->running);  // ← ADD THIS
         
         // Send keepalive every 20 seconds ← AUTOMATIC KEEPALIVE
         time_t now = time(NULL);
