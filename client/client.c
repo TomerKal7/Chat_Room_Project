@@ -740,12 +740,12 @@ int handle_leave_room_response(client_t *client, void *response_data) {
     struct leave_room_response *resp = (struct leave_room_response*)response_data;
     
     if (resp->error_code == ROOM_SUCCESS_CODE) {
-        printf("Successfully left room '%s'\n", client->current_room);
-        
-        // Leave multicast group
+        // ✅ FIRST: Leave multicast group BEFORE resetting room state
         leave_multicast_group(client);
         
-        // Reset client room state
+        printf("Successfully left room '%s'\n", client->current_room);
+        
+        // ✅ THEN: Reset client room state
         client->current_room_id = 0;
         memset(client->current_room, 0, sizeof(client->current_room));
         client->in_room = 0;
@@ -760,6 +760,7 @@ int handle_leave_room_response(client_t *client, void *response_data) {
         return -1;
     }
 }
+
 
 // ================================
 // CONNECTION MANAGEMENT FUNCTIONS
@@ -821,7 +822,11 @@ int send_disconnect_request(client_t *client) {
 // ================================
 
 int leave_multicast_group(client_t *client) {
+    printf("DEBUG: Attempting to leave multicast group, room_id=%d\n", client->current_room_id);
+    
     if (client->udp_socket == -1 || client->current_room_id == 0) {
+        printf("DEBUG: Not in multicast group (socket=%d, room_id=%d)\n", 
+               client->udp_socket, client->current_room_id);
         return 0; // Not in multicast group
     }
     
@@ -829,15 +834,16 @@ int leave_multicast_group(client_t *client) {
     mreq.imr_multiaddr = client->multicast_addr.sin_addr;
     mreq.imr_interface.s_addr = INADDR_ANY;
     
+    printf("DEBUG: Calling IP_DROP_MEMBERSHIP for multicast group\n");
     if (setsockopt(client->udp_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP,
                    (const char*)&mreq, sizeof(mreq)) != 0) {
         perror("Failed to leave multicast group");
         return -1;
     }
     
+    printf("DEBUG: Successfully left multicast group\n");
     return 0;
 }
-
 // ================================
 // INPUT VALIDATION FUNCTIONS
 // ================================
