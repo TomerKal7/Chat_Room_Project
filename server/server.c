@@ -262,11 +262,9 @@ int handle_client_message(server_t *server, int client_index) {
     if (bytes_received <= 0) {
         if (bytes_received < 0) {
             perror("recv error");
-            printf("Client %d: Connection closed by client\n", client_index);
-
+            printf("Client %d: recv() error: errno=%d (%s)\n", client_index, errno, strerror(errno));
         } else {
-            printf("Client %d: recv() error: errno=%d\n", client_index, errno);
-            printf("Client %d disconnected\n", client_index);
+           printf("Client %d: Connection closed by client (recv=0)\n", client_index);
         }
         return -1; // Client disconnected or error
     }
@@ -275,6 +273,7 @@ int handle_client_message(server_t *server, int client_index) {
 
     struct message_header *header = (struct message_header *)buffer; // Cast buffer to message header
     printf("Received message from client %d: type=%d, length=%d\n", client_index, header->msg_type, header->msg_length);
+    printf("Processing message type %d for client %d\n", header->msg_type, client_index);
 
     // Handle different message types based on the header
     switch (header->msg_type) {

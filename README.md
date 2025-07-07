@@ -217,8 +217,8 @@ test.bat
 - **TCP Port:** Command and control (configurable, default 8080)
 - **UDP Multicast Base:** 224.0.0.1 (room-specific addresses)
 - **UDP Port Range:** 8001+ (auto-assigned per room)
-- **Max Clients:** 100 (configurable)
-- **Max Rooms:** 50 (configurable)
+- **Max Clients:** 50 (configurable)
+- **Max Rooms:** 20 (configurable)
 
 ## 🔧 Configuration
 
