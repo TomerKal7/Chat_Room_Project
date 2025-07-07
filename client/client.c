@@ -827,7 +827,7 @@ int leave_multicast_group(client_t *client) {
     if (client->udp_socket == -1 || client->current_room_id == 0) {
         printf("DEBUG: Not in multicast group (socket=%d, room_id=%d)\n", 
                client->udp_socket, client->current_room_id);
-        return 0; // Not in multicast group
+        return 0;
     }
     
     struct ip_mreq mreq;
@@ -842,6 +842,30 @@ int leave_multicast_group(client_t *client) {
     }
     
     printf("DEBUG: Successfully left multicast group\n");
+    
+    // ✅ ADD: Close and recreate UDP socket to fully unbind from port
+    #ifdef _WIN32
+    closesocket(client->udp_socket);
+    client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client->udp_socket == INVALID_SOCKET) {
+        perror("Failed to recreate UDP socket");
+        return -1;
+    }
+    #else
+    close(client->udp_socket);
+    client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client->udp_socket == -1) {
+        perror("Failed to recreate UDP socket");
+        return -1;
+    }
+    #endif
+    
+    // Reset socket options
+    int reuse = 1;
+    setsockopt(client->udp_socket, SOL_SOCKET, SO_REUSEADDR, 
+               (const char*)&reuse, sizeof(reuse));
+    
+    printf("DEBUG: UDP socket recreated and unbound from multicast port\n");
     return 0;
 }
 // ================================
