@@ -822,11 +822,8 @@ int send_disconnect_request(client_t *client) {
 // ================================
 
 int leave_multicast_group(client_t *client) {
-    printf("DEBUG: Attempting to leave multicast group, room_id=%d\n", client->current_room_id);
     
     if (client->udp_socket == -1 || client->current_room_id == 0) {
-        printf("DEBUG: Not in multicast group (socket=%d, room_id=%d)\n", 
-               client->udp_socket, client->current_room_id);
         return 0;
     }
     
@@ -834,14 +831,12 @@ int leave_multicast_group(client_t *client) {
     mreq.imr_multiaddr = client->multicast_addr.sin_addr;
     mreq.imr_interface.s_addr = INADDR_ANY;
     
-    printf("DEBUG: Calling IP_DROP_MEMBERSHIP for multicast group\n");
     if (setsockopt(client->udp_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP,
                    (const char*)&mreq, sizeof(mreq)) != 0) {
         perror("Failed to leave multicast group");
         return -1;
     }
     
-    printf("DEBUG: Successfully left multicast group\n");
     
     // ✅ ADD: Close and recreate UDP socket to fully unbind from port
     #ifdef _WIN32
@@ -865,7 +860,6 @@ int leave_multicast_group(client_t *client) {
     setsockopt(client->udp_socket, SOL_SOCKET, SO_REUSEADDR, 
                (const char*)&reuse, sizeof(reuse));
     
-    printf("DEBUG: UDP socket recreated and unbound from multicast port\n");
     return 0;
 }
 // ================================
@@ -1038,7 +1032,6 @@ void handle_enhanced_user_input(client_t *client) {
     while (client->running) {
         printf("> ");
         fflush(stdout);
-        printf("DEBUG: client->running=%d, waiting for input...\n", client->running); 
         
         // Send keepalive every 20 seconds ← AUTOMATIC KEEPALIVE
         time_t now = time(NULL);
@@ -1048,18 +1041,14 @@ void handle_enhanced_user_input(client_t *client) {
         }
         
         if (!fgets(input, sizeof(input), stdin)) {
-            printf("DEBUG: fgets() failed or EOF\n");  // ← ADD THIS
             break;
         }
-        printf("DEBUG: User entered: '%s'\n", input);  // ← ADD THIS
         // Remove newline
         input[strcspn(input, "\n")] = 0;
         
         if (parse_command(input, &command, &args) != 0) {
-            printf("DEBUG: parse_command failed\n");  // ← ADD THIS
             continue;
         }
-        printf("DEBUG: Command: '%s', Args: '%s'\n", command, args ? args : "NULL");  // ← ADD THIS
         // Handle commands
         if (strcmp(command, "login") == 0) {
             if (client->session_token != 0) {
