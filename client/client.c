@@ -466,15 +466,15 @@ int send_join_room_request(client_t *client, const char *room_name, const char *
     if (resp.msg_type == JOIN_ROOM_SUCCESS) {
         client->current_room_id = resp.room_id;
         // Close existing UDP socket and create new one for multicast
-        #ifdef _WIN32
-        if (client->udp_socket != INVALID_SOCKET) {
-            closesocket(client->udp_socket);
-        }
-        #else
-        if (client->udp_socket != -1) {
-            close(client->udp_socket);
-        }
-        #endif
+        // #ifdef _WIN32
+        // if (client->udp_socket != INVALID_SOCKET) {
+        //     closesocket(client->udp_socket);
+        // }
+        // #else
+        // if (client->udp_socket != -1) {
+        //     close(client->udp_socket);
+        // }
+        // #endif
         
         client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
         #ifdef _WIN32
@@ -1050,7 +1050,7 @@ void handle_enhanced_user_input(client_t *client) {
     while (client->running) {
         printf("> ");
         fflush(stdout);
-        printf("DEBUG: client->running=%d, waiting for input...\n", client->running);  // ← ADD THIS
+        printf("DEBUG: client->running=%d, waiting for input...\n", client->running); 
         
         // Send keepalive every 20 seconds ← AUTOMATIC KEEPALIVE
         time_t now = time(NULL);
