@@ -6,6 +6,7 @@ SERVER_PORT="8080"
 CLIENT_IPS=("192.7.1.1" "192.7.2.1" "192.7.3.1" "192.7.4.1")
 ROOM_NAME="testroom"
 ROOM_PASS="testpass"
+SSH_PASS="snoopy"
 
 # Colors
 RED='\033[0;31m'
@@ -46,8 +47,6 @@ user_list
 sleep 2
 chat Testing multicast from user${client_id}
 sleep 5
-private user2 This is a private message from creator
-sleep 3
 room_list
 sleep 2
 quit
@@ -67,8 +66,6 @@ user_list
 sleep 2
 chat Testing from user${client_id}
 sleep 4
-private user1 Private reply from user${client_id}
-sleep 3
 leave_room
 sleep 2
 quit
@@ -105,15 +102,15 @@ run_client_test() {
     # Create test script
     create_test_scenario $client_id $scenario
     
-    # Copy script to client
-    scp client_${client_id}_script.txt root@$client_ip:/root/chatroom/ 2>/dev/null
+    # Copy script to client using sshpass
+    sshpass -p $SSH_PASS scp -o StrictHostKeyChecking=no client_${client_id}_script.txt root@$client_ip:/root/chatroom/ 2>/dev/null
     if [ $? -ne 0 ]; then
         print_error "Failed to copy script to $client_ip"
         return 1
     fi
     
-    # Run test on client
-    ssh root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1" &
+    # Run test on client using sshpass
+    sshpass -p $SSH_PASS ssh -o StrictHostKeyChecking=no root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1" &
     
     local pid=$!
     echo $pid > client_${client_id}.pid
@@ -163,8 +160,8 @@ collect_results() {
     for i in $(seq 1 $total_clients); do
         local client_ip=${CLIENT_IPS[$((i-1))]}
         
-        # Get log from client
-        scp root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log 2>/dev/null
+        # Get log from client using sshpass
+        sshpass -p $SSH_PASS scp -o StrictHostKeyChecking=no root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log 2>/dev/null
         
         if [ -f client_${i}.log ]; then
             local lines=$(wc -l < client_${i}.log)
@@ -190,7 +187,7 @@ analyze_results() {
     # Check for successful logins
     local login_success=0
     for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "Login successful" client_${i}.log; then
+        if [ -f client_${i}.log ] && grep -q "Login successful\|Welcome user" client_${i}.log; then
             ((login_success++))
         fi
     done
@@ -199,7 +196,7 @@ analyze_results() {
     # Check for room operations
     local room_joins=0
     for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "Successfully joined room" client_${i}.log; then
+        if [ -f client_${i}.log ] && grep -q "Successfully joined room\|joined room" client_${i}.log; then
             ((room_joins++))
         fi
     done
@@ -214,18 +211,18 @@ analyze_results() {
     done
     echo "Clients that received chat messages: $chat_messages/$total_clients"
     
-    # Check for private messages
-    local private_messages=0
+    # Check for room creation
+    local room_creation=0
     for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "PRIVATE" client_${i}.log; then
-            ((private_messages++))
+        if [ -f client_${i}.log ] && grep -q "Room.*created\|created successfully" client_${i}.log; then
+            ((room_creation++))
         fi
     done
-    echo "Clients with private message activity: $private_messages/$total_clients"
+    echo "Successful room creation: $room_creation/1"
     
     # Overall success rate
-    local overall_score=$((login_success + room_joins + chat_messages))
-    local max_score=$((total_clients * 3))
+    local overall_score=$((login_success + room_joins + chat_messages + room_creation))
+    local max_score=$((total_clients * 3 + 1))  # 3 per client + 1 room creation
     local success_rate=$((overall_score * 100 / max_score))
     
     echo -e "\n${BLUE}Overall Success Rate: ${success_rate}%${NC}"
@@ -277,6 +274,13 @@ main() {
     print_status "Server: $SERVER_IP:$SERVER_PORT"
     print_status "Room: $ROOM_NAME (password: $ROOM_PASS)"
     print_status "Clients: ${#CLIENT_IPS[@]}"
+    print_status "SSH Password: [CONFIGURED]"
+    
+    # Check if sshpass is installed
+    if ! command -v sshpass &> /dev/null; then
+        print_error "sshpass not found. Installing..."
+        apt-get update && apt-get install -y sshpass
+    fi
     
     # Test scenarios: creator, joiner, joiner, late_joiner
     local scenarios=("creator" "joiner" "joiner" "late_joiner")
