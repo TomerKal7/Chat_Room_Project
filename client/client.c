@@ -202,7 +202,7 @@ void *udp_receiver_thread(void *arg) {
         FD_SET(client->udp_socket, &read_fds);
         
         // ALSO monitor TCP socket for private messages
-        FD_SET(client->tcp_socket, &read_fds);
+        //FD_SET(client->tcp_socket, &read_fds);
         
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
@@ -259,31 +259,31 @@ void *udp_receiver_thread(void *arg) {
             }
         }
         
-        // Handle TCP private messages
-        if (result > 0 && FD_ISSET(client->tcp_socket, &read_fds)) {
-            ssize_t bytes_received = recv(client->tcp_socket, buffer, sizeof(buffer) - 1, 0);
-            if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
-                buffer[bytes_received] = '\0';
+        // // Handle TCP private messages
+        // if (result > 0 && FD_ISSET(client->tcp_socket, &read_fds)) {
+        //     ssize_t bytes_received = recv(client->tcp_socket, buffer, sizeof(buffer) - 1, 0);
+        //     if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
+        //         buffer[bytes_received] = '\0';
                 
-                struct message_header *header = (struct message_header*)buffer;
-                if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
-                    struct private_message *priv_msg = (struct private_message*)buffer;
-                    if (priv_msg->target_username_len < 32 && 
-                        priv_msg->message_len < 512 && 
-                        priv_msg->message_len > 0) {
-                        // Show private messages received via TCP
-                        printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
-                               (int)priv_msg->target_username_len, priv_msg->target_username,
-                               (int)priv_msg->message_len, priv_msg->message);
-                        fflush(stdout);
-                    }
-                }
-            } else if (bytes_received < 0) {
-                // Server closed TCP connection
-                printf("\nServer disconnected\n");
-                break;
-            }
-        }
+        //         struct message_header *header = (struct message_header*)buffer;
+        //         if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
+        //             struct private_message *priv_msg = (struct private_message*)buffer;
+        //             if (priv_msg->target_username_len < 32 && 
+        //                 priv_msg->message_len < 512 && 
+        //                 priv_msg->message_len > 0) {
+        //                 // Show private messages received via TCP
+        //                 printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
+        //                        (int)priv_msg->target_username_len, priv_msg->target_username,
+        //                        (int)priv_msg->message_len, priv_msg->message);
+        //                 fflush(stdout);
+        //             }
+        //         }
+        //     } else if (bytes_received < 0) {
+        //         // Server closed TCP connection
+        //         printf("\nServer disconnected\n");
+        //         break;
+        //     }
+        // }
         
         #ifdef _WIN32
         else if (result == SOCKET_ERROR) {
