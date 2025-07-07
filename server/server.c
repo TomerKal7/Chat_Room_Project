@@ -13,6 +13,7 @@
 #include <netinet/in.h>
 #endif
 #include "server.h"
+#include "../common/protocol.h"
 
 int main() {
     printf("Chat server starting...\n");
@@ -259,8 +260,9 @@ int handle_client_message(server_t *server, int client_index) {
     if (bytes_received <= 0) {
         if (bytes_received < 0) {
             perror("recv error");
+            printf("Client %d: recv() error: errno=%d (%s)\n", client_index, errno, strerror(errno));
         } else {
-            printf("Client %d disconnected\n", client_index);
+           printf("Client %d: Connection closed by client (recv=0)\n", client_index);
         }
         return -1; // Client disconnected or error
     }
@@ -268,7 +270,6 @@ int handle_client_message(server_t *server, int client_index) {
     server->clients[client_index].last_activity = time(NULL); // Update last activity time
 
     struct message_header *header = (struct message_header *)buffer; // Cast buffer to message header
-    printf("Received message from client %d: type=%d, length=%d\n", client_index, header->msg_type, header->msg_length);
 
     // Handle different message types based on the header
     switch (header->msg_type) {
@@ -354,7 +355,6 @@ int is_valid_password(const char *pw, int len) {
 }
 
 int handle_create_room_request(server_t *server, int client_index, struct create_room_request *req) {
-    printf("Client %d wants to create room: %.*s\n", client_index, req->room_name_len, req->room_name);
 
     // Check if client is logged in
     if (server->clients[client_index].state != CLIENT_CONNECTED) {
@@ -482,7 +482,6 @@ void send_join_room_error(server_t *server, int client_index, uint16_t error_cod
 }
 
 int handle_join_room_request(server_t *server, int client_index, struct join_room_request *req) {
-    printf("Client %d wants to join room: %.*s\n", client_index, req->room_name_len, req->room_name);
 
     // Check if client is logged in
     if (server->clients[client_index].state != CLIENT_CONNECTED) {
@@ -769,8 +768,6 @@ int handle_disconnect_request(server_t *server, int client_index) {
 int handle_chat_message(server_t *server, int client_index, struct chat_message *msg) {
     client_t *sender = &server->clients[client_index];
     
-    printf("Chat message from client %d in room %d: %.*s\n", 
-           client_index, sender->current_room_id, msg->message_len, msg->message);
 
     // Check if client is in a room
     if (sender->state != CLIENT_IN_ROOM || sender->current_room_id < 0) {
@@ -815,7 +812,6 @@ int handle_chat_message(server_t *server, int client_index, struct chat_message 
 #endif
 
     if (result == 0) {
-        printf("Chat message sent via multicast to room %d\n", sender->current_room_id);
     } else {
         printf("Failed to send multicast message to room %d\n", sender->current_room_id);
     }
@@ -1005,9 +1001,6 @@ int send_multicast_message(server_t *server, int room_id, const char *message, s
         perror("Failed to send multicast message");
         return -1;
     }
-    
-    printf("Multicast message sent to room %d (%s:%d): %d bytes\n", 
-           room_id, room->multicast_addr, room->multicast_port, sent);
     return 0;
 }
 
@@ -1254,7 +1247,7 @@ int create_client_thread(server_t *server, int client_index) {
         return -1;
     }
 #endif
-    
+    FD_CLR(server->clients[client_index].socket_fd, &server->master_fds);
     printf("Thread created for client %d in slot %d\n", client_index, thread_slot);
     return 0;
 }
@@ -1268,9 +1261,7 @@ int handle_room_list_request(server_t *server, int client_index) {
         send_error_response(client->socket_fd, "Not connected");
         return -1;
     }
-    
-    printf("Room list request from client %d\n", client_index);
-    
+        
     // Count active rooms first
     uint8_t active_room_count = 0;
     for (int i = 0; i < MAX_ROOMS; i++) {
@@ -1367,9 +1358,7 @@ int handle_user_list_request(server_t *server, int client_index) {
         send_error_response(client->socket_fd, "Not in a room");
         return -1;
     }
-    
-    printf("User list request from client %d for room %d\n", client_index, client->current_room_id);
-    
+        
     // Count users in the same room
     uint8_t user_count = 0;
     for (int i = 0; i < MAX_CLIENTS; i++) {

@@ -289,61 +289,99 @@ test_concurrent_clients() {
     print_status "Testing concurrent clients..."
     restart_server_if_needed
     
-    # Create test scripts for multiple clients
-    for i in {1..3}; do
+    # Create test scripts for multiple clients with SHARED room
+    cat > client_1_test.txt << EOF
+login user1 pass1
+create_room sharedroom roompass
+join_room sharedroom roompass
+chat Hello from client 1
+sleep 2
+user_list
+sleep 1
+quit
+EOF
+    
+    for i in {2..3}; do
         cat > client_${i}_test.txt << EOF
 login user${i} pass${i}
-create_room room${i} roompass${i}
-join_room room${i} roompass${i}
+sleep 1
+join_room sharedroom roompass
 chat Hello from client ${i}
-room_list
+sleep 2
 user_list
-leave_room
+sleep 1
 quit
 EOF
     done
     
-    # Start multiple clients in background with shorter timeout
-    for i in {1..3}; do
-        timeout 10s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < client_${i}_test.txt > client_${i}.log 2>&1 &
+    # Start client 1 first (creates room)
+    timeout 20s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < client_1_test.txt > client_1.log 2>&1 &
+    local pid1=$!
+    
+    # Wait for room creation
+    sleep 3
+    
+    # Start clients 2 and 3
+    for i in {2..3}; do
+        timeout 20s $CLIENT_EXEC $SERVER_IP $SERVER_PORT < client_${i}_test.txt > client_${i}.log 2>&1 &
+        sleep 1  # Stagger the starts
     done
     
-    # Wait for all background processes with timeout
+    # Wait for all processes with longer timeout
     local wait_count=0
-    while [ $wait_count -lt 15 ]; do
-        if ! jobs %1 %2 %3 2>/dev/null | grep -q Running; then
+    while [ $wait_count -lt 25 ]; do
+        local running=0
+        for i in {1..3}; do
+            if ps -p $(jobs -p 2>/dev/null | head -n $i | tail -n 1) >/dev/null 2>&1; then
+                ((running++))
+            fi
+        done
+        
+        if [ $running -eq 0 ]; then
             break
         fi
+        
         sleep 1
         ((wait_count++))
     done
     
-    # Kill any remaining background processes
-    jobs -p | xargs -r kill 2>/dev/null
+    # Kill any remaining processes
+    jobs -p | xargs -r kill -9 2>/dev/null
+    wait 2>/dev/null
     
-    # Check if at least one client succeeded
-    success=0
+    # Check for success - look for specific patterns
+    local success_count=0
+    
     for i in {1..3}; do
-        if grep -q "user${i}\|room${i}\|Hello\|client ${i}" client_${i}.log; then
-            success=1
-            break
+        if [ -f "client_${i}.log" ]; then
+            # Check for login success AND room operations
+            if grep -q "Login successful\|logged in" client_${i}.log && \
+               grep -q "joined\|room\|sharedroom" client_${i}.log; then
+                print_status "Client $i: Success"
+                ((success_count++))
+            else
+                print_status "Client $i: Failed"
+                echo "=== Client $i log ==="
+                cat client_${i}.log | head -10
+            fi
+        else
+            print_status "Client $i: No log file"
         fi
     done
     
-    if [ $success -eq 1 ]; then
-        print_success "Concurrent client test passed"
+    if [ $success_count -ge 2 ]; then
+        print_success "Concurrent client test passed ($success_count/3 clients succeeded)"
         return 0
     else
-        print_error "Concurrent client test failed"
-        echo "Client logs:"
-        for i in {1..3}; do
-            echo "=== Client $i ==="
-            cat client_${i}.log
-        done
+        print_error "Concurrent client test failed (only $success_count/3 clients succeeded)"
+        
+        # Show server log for debugging
+        echo "=== Server log (last 20 lines) ==="
+        tail -20 server.log
+        
         return 1
     fi
 }
-
 # Test room password validation
 test_room_password_validation() {
     print_status "Testing room password validation..."

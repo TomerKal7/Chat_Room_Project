@@ -201,9 +201,6 @@ void *udp_receiver_thread(void *arg) {
         FD_ZERO(&read_fds);
         FD_SET(client->udp_socket, &read_fds);
         
-        // ALSO monitor TCP socket for private messages
-        FD_SET(client->tcp_socket, &read_fds);
-        
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         
@@ -258,34 +255,6 @@ void *udp_receiver_thread(void *arg) {
                 }
             }
         }
-        
-        // Handle TCP private messages
-        if (result > 0 && FD_ISSET(client->tcp_socket, &read_fds)) {
-            ssize_t bytes_received = recv(client->tcp_socket, buffer, sizeof(buffer) - 1, 0);
-            if (bytes_received > 0 && bytes_received >= (ssize_t)sizeof(struct message_header)) {
-                buffer[bytes_received] = '\0';
-                
-                struct message_header *header = (struct message_header*)buffer;
-                if (header->msg_type == PRIVATE_MESSAGE && bytes_received >= (ssize_t)sizeof(struct private_message)) {
-                    struct private_message *priv_msg = (struct private_message*)buffer;
-                    if (priv_msg->target_username_len < 32 && 
-                        priv_msg->message_len < 512 && 
-                        priv_msg->message_len > 0) {
-                        // Show private messages received via TCP
-                        printf("\n[PRIVATE from %.*s]: %.*s\n> ", 
-                               (int)priv_msg->target_username_len, priv_msg->target_username,
-                               (int)priv_msg->message_len, priv_msg->message);
-                        fflush(stdout);
-                    }
-                }
-            } else if (bytes_received <= 0) {
-                // Server closed TCP connection
-                printf("\nServer disconnected\n");
-                client->running = 0;
-                break;
-            }
-        }
-        
         #ifdef _WIN32
         else if (result == SOCKET_ERROR) {
             if (WSAGetLastError() != WSAETIMEDOUT) {
@@ -466,18 +435,6 @@ int send_join_room_request(client_t *client, const char *room_name, const char *
     
     if (resp.msg_type == JOIN_ROOM_SUCCESS) {
         client->current_room_id = resp.room_id;
-        // Close existing UDP socket and create new one for multicast
-        #ifdef _WIN32
-        if (client->udp_socket != INVALID_SOCKET) {
-            closesocket(client->udp_socket);
-        }
-        #else
-        if (client->udp_socket != -1) {
-            close(client->udp_socket);
-        }
-        #endif
-        
-        client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
         #ifdef _WIN32
         if (client->udp_socket == INVALID_SOCKET) {
         #else
@@ -783,12 +740,12 @@ int handle_leave_room_response(client_t *client, void *response_data) {
     struct leave_room_response *resp = (struct leave_room_response*)response_data;
     
     if (resp->error_code == ROOM_SUCCESS_CODE) {
-        printf("Successfully left room '%s'\n", client->current_room);
-        
-        // Leave multicast group
+        // ✅ FIRST: Leave multicast group BEFORE resetting room state
         leave_multicast_group(client);
         
-        // Reset client room state
+        printf("Successfully left room '%s'\n", client->current_room);
+        
+        // ✅ THEN: Reset client room state
         client->current_room_id = 0;
         memset(client->current_room, 0, sizeof(client->current_room));
         client->in_room = 0;
@@ -803,6 +760,7 @@ int handle_leave_room_response(client_t *client, void *response_data) {
         return -1;
     }
 }
+
 
 // ================================
 // CONNECTION MANAGEMENT FUNCTIONS
@@ -864,8 +822,9 @@ int send_disconnect_request(client_t *client) {
 // ================================
 
 int leave_multicast_group(client_t *client) {
+    
     if (client->udp_socket == -1 || client->current_room_id == 0) {
-        return 0; // Not in multicast group
+        return 0;
     }
     
     struct ip_mreq mreq;
@@ -878,9 +837,31 @@ int leave_multicast_group(client_t *client) {
         return -1;
     }
     
+    
+    // ✅ ADD: Close and recreate UDP socket to fully unbind from port
+    #ifdef _WIN32
+    closesocket(client->udp_socket);
+    client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client->udp_socket == INVALID_SOCKET) {
+        perror("Failed to recreate UDP socket");
+        return -1;
+    }
+    #else
+    close(client->udp_socket);
+    client->udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (client->udp_socket == -1) {
+        perror("Failed to recreate UDP socket");
+        return -1;
+    }
+    #endif
+    
+    // Reset socket options
+    int reuse = 1;
+    setsockopt(client->udp_socket, SOL_SOCKET, SO_REUSEADDR, 
+               (const char*)&reuse, sizeof(reuse));
+    
     return 0;
 }
-
 // ================================
 // INPUT VALIDATION FUNCTIONS
 // ================================
@@ -1062,14 +1043,12 @@ void handle_enhanced_user_input(client_t *client) {
         if (!fgets(input, sizeof(input), stdin)) {
             break;
         }
-        
         // Remove newline
         input[strcspn(input, "\n")] = 0;
         
         if (parse_command(input, &command, &args) != 0) {
             continue;
         }
-        
         // Handle commands
         if (strcmp(command, "login") == 0) {
             if (client->session_token != 0) {
