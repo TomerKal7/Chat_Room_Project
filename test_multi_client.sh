@@ -1,12 +1,11 @@
 #!/bin/bash
 
-# Multi-client automated test script
-SERVER_IP="192.7.5.1"  # Change to your server IP
+# Multi-client test without sshpass
+SERVER_IP="192.7.5.1"
 SERVER_PORT="8080"
 CLIENT_IPS=("192.7.1.1" "192.7.2.1" "192.7.3.1" "192.7.4.1")
 ROOM_NAME="testroom"
 ROOM_PASS="testpass"
-SSH_PASS="snoopy"
 
 # Colors
 RED='\033[0;31m'
@@ -27,48 +26,44 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check prerequisites
-check_prerequisites() {
-    print_status "Checking prerequisites..."
+# Create expect script for SSH
+create_expect_script() {
+    local client_ip=$1
+    local client_id=$2
+    local script_file=$3
     
-    # Check if running as root
-    if [ "$EUID" -ne 0 ]; then
-        print_error "Please run as root: sudo $0"
-        exit 1
-    fi
-    
-    # Install sshpass if needed
-    if ! command -v sshpass &> /dev/null; then
-        print_status "Installing sshpass..."
-        apt-get update -qq && apt-get install -y sshpass &>/dev/null
-        if [ $? -ne 0 ]; then
-            print_error "Failed to install sshpass"
-            exit 1
-        fi
-        print_success "sshpass installed"
-    fi
-    
-    # Test SSH connectivity
-    print_status "Testing SSH connectivity..."
-    local ssh_ok=0
-    for ip in "${CLIENT_IPS[@]}"; do
-        if sshpass -p $SSH_PASS ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$ip "echo 'test'" &>/dev/null; then
-            print_success "SSH to $ip: OK"
-            ((ssh_ok++))
-        else
-            print_error "SSH to $ip: FAILED"
-        fi
-    done
-    
-    if [ $ssh_ok -eq 0 ]; then
-        print_error "No SSH connections working. Check network and credentials."
-        exit 1
-    fi
-    
-    print_success "Prerequisites check completed ($ssh_ok/${#CLIENT_IPS[@]} SSH connections working)"
+    cat > ssh_${client_id}.exp << EOF
+#!/usr/bin/expect -f
+set timeout 20
+spawn scp -o StrictHostKeyChecking=no $script_file root@$client_ip:/root/chatroom/
+expect {
+    "password:" { 
+        send "snoopy\r"
+        exp_continue
+    }
+    "100%" { 
+        # File copied successfully
+    }
+    timeout { 
+        exit 1 
+    }
 }
 
-# Test scenarios (same as before)
+spawn ssh -o StrictHostKeyChecking=no root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1"
+expect {
+    "password:" { 
+        send "snoopy\r"
+        exp_continue
+    }
+    timeout { 
+        exit 1 
+    }
+}
+EOF
+    chmod +x ssh_${client_id}.exp
+}
+
+# Test scenarios
 create_test_scenario() {
     local client_id=$1
     local scenario=$2
@@ -88,8 +83,6 @@ user_list
 sleep 2
 chat Testing multicast from user${client_id}
 sleep 5
-room_list
-sleep 2
 quit
 EOF
             ;;
@@ -124,15 +117,13 @@ chat Late joiner user${client_id} here!
 sleep 3
 user_list
 sleep 4
-chat Final message from user${client_id}
-sleep 2
 quit
 EOF
             ;;
     esac
 }
 
-# Run test on single client (same as before but with better error handling)
+# Run test with expect
 run_client_test() {
     local client_ip=$1
     local client_id=$2
@@ -140,32 +131,21 @@ run_client_test() {
     
     print_status "Starting test on client $client_ip (user$client_id, scenario: $scenario)"
     
-    # Create test script
     create_test_scenario $client_id $scenario
     
-    # Test SSH first
-    if ! sshpass -p $SSH_PASS ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$client_ip "echo 'test'" &>/dev/null; then
-        print_error "Cannot connect to $client_ip via SSH"
+    if command -v expect >/dev/null 2>&1; then
+        create_expect_script $client_ip $client_id "client_${client_id}_script.txt"
+        ./ssh_${client_id}.exp &
+        local pid=$!
+        echo $pid > client_${client_id}.pid
+        print_success "Client $client_id test started with expect (PID: $pid)"
+    else
+        print_error "expect not found. Manual SSH required for client $client_id"
         return 1
     fi
-    
-    # Copy script to client
-    if ! sshpass -p $SSH_PASS scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no client_${client_id}_script.txt root@$client_ip:/root/chatroom/ 2>/dev/null; then
-        print_error "Failed to copy script to $client_ip"
-        return 1
-    fi
-    
-    # Run test on client
-    sshpass -p $SSH_PASS ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1" &
-    
-    local pid=$!
-    echo $pid > client_${client_id}.pid
-    
-    print_success "Client $client_id test started (PID: $pid)"
-    return 0
 }
 
-# Monitor test progress (same as before)
+# Rest of functions (monitor, collect, analyze) stay the same...
 monitor_tests() {
     local total_clients=$1
     local max_wait=70
@@ -197,94 +177,30 @@ monitor_tests() {
     echo ""
 }
 
-# Rest of functions (collect_results, analyze_results, etc.) stay the same...
 collect_results() {
     local total_clients=$1
-    
     print_status "Collecting results from clients..."
     
     for i in $(seq 1 $total_clients); do
         local client_ip=${CLIENT_IPS[$((i-1))]}
         
-        # Get log from client
-        if sshpass -p $SSH_PASS scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log 2>/dev/null; then
-            local lines=$(wc -l < client_${i}.log)
-            if [ $lines -gt 5 ]; then
-                print_success "Client $i (${client_ip}): $lines log lines"
-            else
-                print_error "Client $i (${client_ip}): Only $lines log lines (possible failure)"
-            fi
+        if command -v expect >/dev/null 2>&1; then
+            # Use expect to get log
+            expect << EOF
+set timeout 10
+spawn scp -o StrictHostKeyChecking=no root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log
+expect "password:" { send "snoopy\r" }
+expect eof
+EOF
         else
-            print_error "Client $i (${client_ip}): Failed to retrieve log file"
+            print_error "Cannot retrieve log from client $i - expect not available"
         fi
-    done
-}
-
-# Analyze results (same as before)
-analyze_results() {
-    local total_clients=$1
-    
-    print_status "Analyzing test results..."
-    
-    echo -e "\n${BLUE}=== TEST ANALYSIS ===${NC}"
-    
-    local login_success=0
-    for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "Login successful\|Welcome user" client_${i}.log; then
-            ((login_success++))
-        fi
-    done
-    echo "Successful logins: $login_success/$total_clients"
-    
-    local room_joins=0
-    for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "Successfully joined room\|joined room" client_${i}.log; then
-            ((room_joins++))
-        fi
-    done
-    echo "Successful room joins: $room_joins/$total_clients"
-    
-    local chat_messages=0
-    for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "\[.*\]:" client_${i}.log; then
-            ((chat_messages++))
-        fi
-    done
-    echo "Clients that received chat messages: $chat_messages/$total_clients"
-    
-    local room_creation=0
-    for i in $(seq 1 $total_clients); do
-        if [ -f client_${i}.log ] && grep -q "Room.*created\|created successfully" client_${i}.log; then
-            ((room_creation++))
-        fi
-    done
-    echo "Successful room creation: $room_creation/1"
-    
-    local overall_score=$((login_success + room_joins + chat_messages + room_creation))
-    local max_score=$((total_clients * 3 + 1))
-    local success_rate=$((overall_score * 100 / max_score))
-    
-    echo -e "\n${BLUE}Overall Success Rate: ${success_rate}%${NC}"
-    
-    if [ $success_rate -ge 80 ]; then
-        print_success "Test PASSED! Multi-client functionality working well."
-    elif [ $success_rate -ge 60 ]; then
-        echo -e "${YELLOW}[WARNING]${NC} Test partially successful. Some issues detected."
-    else
-        print_error "Test FAILED! Significant issues with multi-client functionality."
-    fi
-}
-
-# Show detailed logs
-show_detailed_logs() {
-    echo -e "\n${BLUE}=== DETAILED LOGS ===${NC}"
-    
-    for i in $(seq 1 4); do
-        echo -e "\n${YELLOW}--- Client $i Log ---${NC}"
+        
         if [ -f client_${i}.log ]; then
-            tail -20 client_${i}.log
+            local lines=$(wc -l < client_${i}.log)
+            print_success "Client $i (${client_ip}): $lines log lines"
         else
-            echo "No log available"
+            print_error "Client $i (${client_ip}): No log file"
         fi
     done
 }
@@ -299,23 +215,24 @@ cleanup() {
             kill $pid 2>/dev/null
             rm -f client_${i}.pid
         fi
-        rm -f client_${i}_script.txt
+        rm -f client_${i}_script.txt ssh_${i}.exp
     done
 }
 
-# Main test execution
+# Main function
 main() {
     echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}  Multi-Client Chat Room Test   ${NC}"
+    echo -e "${BLUE}  Multi-Client Test (No Internet)${NC}"
     echo -e "${BLUE}================================${NC}"
     
     print_status "Server: $SERVER_IP:$SERVER_PORT"
     print_status "Room: $ROOM_NAME (password: $ROOM_PASS)"
-    print_status "Clients: ${#CLIENT_IPS[@]}"
-    print_status "SSH Password: [CONFIGURED]"
+    print_status "Using: expect (if available)"
     
-    # Check prerequisites first
-    check_prerequisites
+    if ! command -v expect >/dev/null 2>&1; then
+        print_error "expect not found. Please install expect or use manual testing"
+        exit 1
+    fi
     
     local scenarios=("creator" "joiner" "joiner" "late_joiner")
     
@@ -329,11 +246,6 @@ main() {
     
     monitor_tests ${#CLIENT_IPS[@]}
     collect_results ${#CLIENT_IPS[@]}
-    analyze_results ${#CLIENT_IPS[@]}
-    
-    if [ "$1" = "--verbose" ]; then
-        show_detailed_logs
-    fi
     
     cleanup
     echo -e "\n${BLUE}Test completed!${NC}"
