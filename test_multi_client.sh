@@ -27,7 +27,48 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Test scenarios
+# Check prerequisites
+check_prerequisites() {
+    print_status "Checking prerequisites..."
+    
+    # Check if running as root
+    if [ "$EUID" -ne 0 ]; then
+        print_error "Please run as root: sudo $0"
+        exit 1
+    fi
+    
+    # Install sshpass if needed
+    if ! command -v sshpass &> /dev/null; then
+        print_status "Installing sshpass..."
+        apt-get update -qq && apt-get install -y sshpass &>/dev/null
+        if [ $? -ne 0 ]; then
+            print_error "Failed to install sshpass"
+            exit 1
+        fi
+        print_success "sshpass installed"
+    fi
+    
+    # Test SSH connectivity
+    print_status "Testing SSH connectivity..."
+    local ssh_ok=0
+    for ip in "${CLIENT_IPS[@]}"; do
+        if sshpass -p $SSH_PASS ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$ip "echo 'test'" &>/dev/null; then
+            print_success "SSH to $ip: OK"
+            ((ssh_ok++))
+        else
+            print_error "SSH to $ip: FAILED"
+        fi
+    done
+    
+    if [ $ssh_ok -eq 0 ]; then
+        print_error "No SSH connections working. Check network and credentials."
+        exit 1
+    fi
+    
+    print_success "Prerequisites check completed ($ssh_ok/${#CLIENT_IPS[@]} SSH connections working)"
+}
+
+# Test scenarios (same as before)
 create_test_scenario() {
     local client_id=$1
     local scenario=$2
@@ -91,7 +132,7 @@ EOF
     esac
 }
 
-# Run test on single client
+# Run test on single client (same as before but with better error handling)
 run_client_test() {
     local client_ip=$1
     local client_id=$2
@@ -102,15 +143,20 @@ run_client_test() {
     # Create test script
     create_test_scenario $client_id $scenario
     
-    # Copy script to client using sshpass
-    sshpass -p $SSH_PASS scp -o StrictHostKeyChecking=no client_${client_id}_script.txt root@$client_ip:/root/chatroom/ 2>/dev/null
-    if [ $? -ne 0 ]; then
+    # Test SSH first
+    if ! sshpass -p $SSH_PASS ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@$client_ip "echo 'test'" &>/dev/null; then
+        print_error "Cannot connect to $client_ip via SSH"
+        return 1
+    fi
+    
+    # Copy script to client
+    if ! sshpass -p $SSH_PASS scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no client_${client_id}_script.txt root@$client_ip:/root/chatroom/ 2>/dev/null; then
         print_error "Failed to copy script to $client_ip"
         return 1
     fi
     
-    # Run test on client using sshpass
-    sshpass -p $SSH_PASS ssh -o StrictHostKeyChecking=no root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1" &
+    # Run test on client
+    sshpass -p $SSH_PASS ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@$client_ip "cd /root/chatroom && timeout 60s ./client $SERVER_IP $SERVER_PORT < client_${client_id}_script.txt > client_${client_id}.log 2>&1" &
     
     local pid=$!
     echo $pid > client_${client_id}.pid
@@ -119,10 +165,10 @@ run_client_test() {
     return 0
 }
 
-# Monitor test progress
+# Monitor test progress (same as before)
 monitor_tests() {
     local total_clients=$1
-    local max_wait=70  # seconds
+    local max_wait=70
     local wait_count=0
     
     print_status "Monitoring tests (max wait: ${max_wait}s)..."
@@ -151,7 +197,7 @@ monitor_tests() {
     echo ""
 }
 
-# Collect results
+# Rest of functions (collect_results, analyze_results, etc.) stay the same...
 collect_results() {
     local total_clients=$1
     
@@ -160,10 +206,8 @@ collect_results() {
     for i in $(seq 1 $total_clients); do
         local client_ip=${CLIENT_IPS[$((i-1))]}
         
-        # Get log from client using sshpass
-        sshpass -p $SSH_PASS scp -o StrictHostKeyChecking=no root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log 2>/dev/null
-        
-        if [ -f client_${i}.log ]; then
+        # Get log from client
+        if sshpass -p $SSH_PASS scp -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@$client_ip:/root/chatroom/client_${i}.log ./client_${i}.log 2>/dev/null; then
             local lines=$(wc -l < client_${i}.log)
             if [ $lines -gt 5 ]; then
                 print_success "Client $i (${client_ip}): $lines log lines"
@@ -171,12 +215,12 @@ collect_results() {
                 print_error "Client $i (${client_ip}): Only $lines log lines (possible failure)"
             fi
         else
-            print_error "Client $i (${client_ip}): No log file retrieved"
+            print_error "Client $i (${client_ip}): Failed to retrieve log file"
         fi
     done
 }
 
-# Analyze results
+# Analyze results (same as before)
 analyze_results() {
     local total_clients=$1
     
@@ -184,7 +228,6 @@ analyze_results() {
     
     echo -e "\n${BLUE}=== TEST ANALYSIS ===${NC}"
     
-    # Check for successful logins
     local login_success=0
     for i in $(seq 1 $total_clients); do
         if [ -f client_${i}.log ] && grep -q "Login successful\|Welcome user" client_${i}.log; then
@@ -193,7 +236,6 @@ analyze_results() {
     done
     echo "Successful logins: $login_success/$total_clients"
     
-    # Check for room operations
     local room_joins=0
     for i in $(seq 1 $total_clients); do
         if [ -f client_${i}.log ] && grep -q "Successfully joined room\|joined room" client_${i}.log; then
@@ -202,7 +244,6 @@ analyze_results() {
     done
     echo "Successful room joins: $room_joins/$total_clients"
     
-    # Check for chat messages
     local chat_messages=0
     for i in $(seq 1 $total_clients); do
         if [ -f client_${i}.log ] && grep -q "\[.*\]:" client_${i}.log; then
@@ -211,7 +252,6 @@ analyze_results() {
     done
     echo "Clients that received chat messages: $chat_messages/$total_clients"
     
-    # Check for room creation
     local room_creation=0
     for i in $(seq 1 $total_clients); do
         if [ -f client_${i}.log ] && grep -q "Room.*created\|created successfully" client_${i}.log; then
@@ -220,9 +260,8 @@ analyze_results() {
     done
     echo "Successful room creation: $room_creation/1"
     
-    # Overall success rate
     local overall_score=$((login_success + room_joins + chat_messages + room_creation))
-    local max_score=$((total_clients * 3 + 1))  # 3 per client + 1 room creation
+    local max_score=$((total_clients * 3 + 1))
     local success_rate=$((overall_score * 100 / max_score))
     
     echo -e "\n${BLUE}Overall Success Rate: ${success_rate}%${NC}"
@@ -254,7 +293,6 @@ show_detailed_logs() {
 cleanup() {
     print_status "Cleaning up..."
     
-    # Kill any remaining processes
     for i in $(seq 1 4); do
         if [ -f client_${i}.pid ]; then
             local pid=$(cat client_${i}.pid)
@@ -276,44 +314,30 @@ main() {
     print_status "Clients: ${#CLIENT_IPS[@]}"
     print_status "SSH Password: [CONFIGURED]"
     
-    # Check if sshpass is installed
-    if ! command -v sshpass &> /dev/null; then
-        print_error "sshpass not found. Installing..."
-        apt-get update && apt-get install -y sshpass
-    fi
+    # Check prerequisites first
+    check_prerequisites
     
-    # Test scenarios: creator, joiner, joiner, late_joiner
     local scenarios=("creator" "joiner" "joiner" "late_joiner")
     
-    # Start tests on all clients
     for i in $(seq 1 ${#CLIENT_IPS[@]}); do
         local client_ip=${CLIENT_IPS[$((i-1))]}
         local scenario=${scenarios[$((i-1))]}
         
         run_client_test $client_ip $i $scenario
-        sleep 1  # Small delay between client starts
+        sleep 1
     done
     
-    # Monitor progress
     monitor_tests ${#CLIENT_IPS[@]}
-    
-    # Collect and analyze results
     collect_results ${#CLIENT_IPS[@]}
     analyze_results ${#CLIENT_IPS[@]}
     
-    # Show logs if requested
     if [ "$1" = "--verbose" ]; then
         show_detailed_logs
     fi
     
-    # Cleanup
     cleanup
-    
     echo -e "\n${BLUE}Test completed!${NC}"
 }
 
-# Handle script termination
 trap cleanup EXIT
-
-# Run main function
 main "$@"
