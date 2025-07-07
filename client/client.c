@@ -1060,16 +1060,18 @@ void handle_enhanced_user_input(client_t *client) {
         }
         
         if (!fgets(input, sizeof(input), stdin)) {
+            printf("DEBUG: fgets() failed or EOF\n");  // ← ADD THIS
             break;
         }
-        
+        printf("DEBUG: User entered: '%s'\n", input);  // ← ADD THIS
         // Remove newline
         input[strcspn(input, "\n")] = 0;
         
         if (parse_command(input, &command, &args) != 0) {
+            printf("DEBUG: parse_command failed\n");  // ← ADD THIS
             continue;
         }
-        
+        printf("DEBUG: Command: '%s', Args: '%s'\n", command, args ? args : "NULL");  // ← ADD THIS
         // Handle commands
         if (strcmp(command, "login") == 0) {
             if (client->session_token != 0) {
