@@ -1259,7 +1259,7 @@ int create_client_thread(server_t *server, int client_index) {
         return -1;
     }
 #endif
-    
+    FD_CLR(server->clients[client_index].socket_fd, &server->master_fds);
     printf("Thread created for client %d in slot %d\n", client_index, thread_slot);
     return 0;
 }
