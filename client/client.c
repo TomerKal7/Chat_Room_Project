@@ -1012,7 +1012,7 @@ void print_help() {
     printf("  join_room <name> [password]       - Join an existing room\n");
     printf("  leave_room                        - Leave current room\n");
     printf("  chat <message>                    - Send a message to current room\n");
-    printf("  private <username> <message>      - Send a private message\n");
+    //printf("  private <username> <message>      - Send a private message\n");
     printf("  room_list                         - List all available rooms\n");
     printf("  user_list                         - List users in current room\n");
     printf("  help                              - Show this help\n");
@@ -1033,9 +1033,9 @@ void handle_enhanced_user_input(client_t *client) {
         printf("> ");
         fflush(stdout);
         
-        // Send keepalive every 20 seconds ← AUTOMATIC KEEPALIVE
+        // Send keepalive every 10 seconds ← AUTOMATIC KEEPALIVE
         time_t now = time(NULL);
-        if (client->session_token != 0 && difftime(now, last_keepalive) > 20) {
+        if (client->session_token != 0 && difftime(now, last_keepalive) > KEEPALIVE_INTERVAL_SEC) {
             send_keepalive(client);
             last_keepalive = now;
         }

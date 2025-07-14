@@ -37,7 +37,7 @@
 
 #define BUFFER_SIZE 1024
 #define MAX_INPUT_SIZE 1024
-#define KEEPALIVE_INTERVAL 30
+//#define KEEPALIVE_INTERVAL 10
 #define RECONNECT_ATTEMPTS 3
 #define RECONNECT_DELAY 5
 #define IS_IN_ROOM(client) ((client)->current_room_id != -1)

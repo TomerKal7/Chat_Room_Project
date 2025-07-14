@@ -1116,9 +1116,9 @@ void* client_thread_handler(void *arg) {
         struct timeval timeout;
         // Check client state and set appropriate timeout
         if (server->clients[client_index].state == CLIENT_AUTHENTICATING) {
-            timeout.tv_sec = 300;  // Increase to 5 minutes for manual login
+            timeout.tv_sec = SESSION_TIMEOUT_SEC; 
         } else {
-            timeout.tv_sec = 120;  // Increase to 2 minutes for normal operations (was 30)
+            timeout.tv_sec = CONNECTION_TIMEOUT_SEC;  
         }
         timeout.tv_usec = 0;
         
