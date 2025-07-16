@@ -36,7 +36,7 @@
 #define KEEPALIVE_INTERVAL_SEC  10   
 #define CONNECTION_TIMEOUT_SEC  30 
 #define RESPONSE_TIMEOUT_SEC    10
-#define SESSION_TIMEOUT_SEC     3600
+#define SESSION_TIMEOUT_SEC     30
 
 // ================================
 // HELPER MACROS AND CONSTANTS
